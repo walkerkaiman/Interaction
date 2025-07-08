@@ -1,0 +1,21 @@
+{
+  "type": "input",
+  "name": "OSC Receiver",
+  "description": "Listens for OSC messages and triggers events.",
+  "entry_point": "osc_input.py",
+  "class_name": "OSCInput",
+  "fields": [
+    {
+      "name": "port",
+      "label": "Port",
+      "type": "int",
+      "default": 9000
+    },
+    {
+      "name": "osc_address",
+      "label": "OSC Address",
+      "type": "text",
+      "default": "/trigger"
+    }
+  ]
+}

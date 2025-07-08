@@ -1,0 +1,15 @@
+{
+  "type": "output",
+  "name": "Audio Player",
+  "description": "Plays an audio file once on trigger.",
+  "entry_point": "audio_output.py",
+  "class_name": "AudioOutput",
+  "fields": [
+    {
+      "name": "file_path",
+      "label": "Audio File Path",
+      "type": "text",
+      "default": ""
+    }
+  ]
+}
