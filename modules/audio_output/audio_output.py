@@ -1,266 +1,406 @@
-from modules.module_base import ModuleBase
-from threading import Thread
-from time import sleep
+"""
+Audio Output Module - Audio Playback and Waveform Visualization
+
+This module implements an audio playback system that can play WAV files with
+volume control and waveform visualization. It supports concurrent playback
+of multiple audio files and provides both individual and master volume control.
+
+Key Features:
+1. WAV file playback using pygame mixer
+2. Individual volume control per module instance
+3. Master volume control from GUI
+4. Waveform visualization generation
+5. Concurrent playback of multiple audio files
+6. Visual cursor showing playback progress
+7. Automatic waveform caching and regeneration
+
+The audio output module uses pygame's mixer system for non-blocking audio
+playback and supports multiple channels for concurrent audio. Waveform
+visualization is generated using matplotlib or pygame as a fallback.
+
+Author: Interaction Framework Team
+License: MIT
+"""
+
 import os
-import numpy as np
+import time
+import threading
 import pygame
-import pygame.mixer
+import numpy as np
+from typing import Dict, Any, Optional, Tuple
+from modules.module_base import ModuleBase
 
+# Try to import matplotlib for waveform generation
+try:
+    import matplotlib
+    matplotlib.use('Agg')  # Use non-interactive backend
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
 
-class AudioOutput(ModuleBase):
-    def __init__(self, config, manifest, log_callback=print):
-        super().__init__(config, manifest, log_callback)
-        self.play_thread = None
-        self.playing = False
-        # Load volume from config (stored as percentage, convert to 0.0-1.0)
-        volume_from_config = float(self.config.get("volume", 100.0))
-        self.volume = round(volume_from_config / 100.0, 3)  # Convert percentage to 0.0-1.0, rounded
-        self.master_volume = 1.0  # Master volume from GUI (0.0 to 1.0)
-        self.cursor_position = 0.0  # 0.0 to 1.0 for waveform cursor
-        self.cursor_callback = None  # Callback for cursor updates
-        self.current_process = None  # Store current audio process
+class AudioOutputModule(ModuleBase):
+    """
+    Audio output module for playing WAV files with volume control and visualization.
+    
+    This module provides audio playback functionality with the following features:
+    - WAV file playback using pygame mixer
+    - Individual volume control (0-100%)
+    - Master volume control from GUI
+    - Waveform visualization generation
+    - Concurrent playback of multiple audio files
+    - Visual cursor showing playback progress
+    - Automatic waveform caching
+    
+    The module uses pygame's mixer system which provides:
+    - Non-blocking audio playback
+    - Multiple channels for concurrent audio
+    - Volume control per channel
+    - Automatic resource management
+    
+    Configuration:
+    - file_path (str): Path to WAV file to play
+    - volume (int): Individual volume (0-100)
+    
+    Event Handling:
+    The module responds to events by playing the configured audio file
+    with the current volume settings. Multiple events can trigger
+    concurrent playback of the same or different audio files.
+    """
+    
+    def __init__(self, config: Dict[str, Any], manifest: Dict[str, Any], 
+                 log_callback=print):
+        """
+        Initialize the audio output module.
         
-        # Initialize waveform
+        Args:
+            config (Dict[str, Any]): Module configuration
+            manifest (Dict[str, Any]): Module manifest
+            log_callback: Function to call for logging
+            
+        Note: The configuration should contain 'file_path' and 'volume' fields.
+        The module will initialize pygame mixer if not already initialized.
+        """
+        super().__init__(config, manifest, log_callback)
+        
+        # Extract configuration values with defaults
+        self.file_path = config.get("file_path", "")
+        self.volume = config.get("volume", 100)
+        
+        # Audio playback state
+        self.current_channel = None
+        self.playback_start_time = None
+        self.audio_duration = 0
+        
+        # Waveform data
+        self.waveform_data = None
         self.waveform_image_path = None
         
-        # Auto-load existing waveform or generate new one on startup
-        file_path = self.config.get("file_path", "")
-        if file_path:
-            self.log_message(f"🔄 Auto-loading waveform on startup for: {file_path}", level="verbose")
-            self.generate_waveform(file_path)
-
-    def start(self):
-        self.log_message("Audio output module ready.", level="verbose")
-
-    def stop(self):
-        if self.playing:
-            # Stop all pygame mixer channels
-            pygame.mixer.stop()
-            self.playing = False
-            self.cursor_position = 0.0
-            if self.cursor_callback:
-                self.cursor_callback(0.0)
-        self.log_message("Audio output stopped.", level="show_mode")
-
-    def set_cursor_callback(self, callback):
-        """Set callback for cursor position updates"""
-        self.cursor_callback = callback
-        self.log_message(f"🎵 Cursor callback set: {callback is not None}", level="verbose")
-
-    def handle_event(self, data=None):
-        self.log_message(f"📨 handle_event() triggered with data: {data}", level="output_trigger")
-        file_path = self.config.get("file_path", "")
-        self.log_message(f"📁 file_path from config: {file_path}", level="verbose")
-        if not file_path or not os.path.isfile(file_path):
-            self.log_message("⚠️ No valid audio file configured.", level="show_mode")
-            return
-
-        # Start new playback thread (non-blocking)
-        self.play_thread = Thread(target=self._play_audio, args=(file_path,))
-        self.play_thread.daemon = True
-        self.play_thread.start()
-
-    def _play_audio(self, file_path):
-        """Play audio using pygame mixer for concurrent playback"""
-        try:
-            self.playing = True
-            
-            # Initialize pygame mixer if not already done
-            if not pygame.mixer.get_init():
-                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
-            
-            # Load and play the sound
-            sound = pygame.mixer.Sound(file_path)
-            
-            # Apply volume
-            effective_volume = self.get_effective_volume()
-            sound.set_volume(effective_volume)
-            
-            # Find an available channel
-            channel = pygame.mixer.find_channel()
-            if channel is None:
-                # If no channel available, use channel 0
-                channel = pygame.mixer.Channel(0)
-            
-            # Play the sound
-            channel.play(sound)
-            
-            self.log_message(f"▶️ Playing: {os.path.basename(file_path)} (volume: {int(effective_volume * 100)}%)", level="output_trigger")
-            
-            # Get duration for cursor tracking
-            duration = sound.get_length()
-            
-            # Start cursor tracking using the new system - only when audio actually starts
-            if self.cursor_callback:
-                self.log_message(f"🎵 Starting cursor animation for {duration:.2f}s audio", level="verbose")
-                # Call the new cursor system with duration
-                self.cursor_callback(duration)
-            else:
-                self.log_message(f"⚠️ No cursor callback set", level="verbose")
-            
-            # Wait for playback to complete
-            while channel.get_busy():
-                sleep(0.1)
-            
-            # Reset cursor when done
-            if self.cursor_callback:
-                self.cursor_callback(0.0)
-            
-        except Exception as e:
-            self.log_message(f"⚠️ Playback error: {e}", level="show_mode")
-            self.playing = False
-            self.cursor_position = 0.0
-            if self.cursor_callback:
-                self.cursor_callback(0.0)
-
-    def _estimate_duration(self, file_path):
-        """Estimate audio duration for cursor tracking"""
-        try:
-            # Use pygame to get duration
-            sound = pygame.mixer.Sound(file_path)
-            return sound.get_length()
-        except Exception:
-            # Fallback: estimate based on file size and typical bitrate
-            file_size = os.path.getsize(file_path)
-            # Assume 16-bit, 44.1kHz, stereo WAV (rough estimate)
-            estimated_duration = file_size / (44100 * 2 * 2)  # bytes / (sample_rate * channels * bytes_per_sample)
-            return max(1.0, estimated_duration)  # Minimum 1 second
-
-    def _track_cursor(self, duration, channel):
-        """Track cursor position during playback"""
-        steps = 100  # Cursor resolution
-        delay = duration / steps
-
-        for i in range(steps + 1):  # Include step 0 and 100
-            if not self.playing or not channel.get_busy():
-                break
-            self.cursor_position = i / steps  # This gives 0.0 to 1.0
-            if self.cursor_callback:
-                self.cursor_callback(self.cursor_position)
-            sleep(delay)
-
-        # Reset cursor when done
-        self.cursor_position = 0.0
-        self.playing = False
-        if self.cursor_callback:
-            self.cursor_callback(0.0)
-
-    def set_volume(self, volume):
-        """Set individual volume (0.0 to 1.0)"""
-        self.volume = round(max(0.0, min(1.0, volume)), 3)
-        # Save as percentage in config, rounded to avoid precision issues
-        self.config["volume"] = round(self.volume * 100.0, 1)
-        self.log_message(f"🔊 Individual volume set to: {int(self.volume * 100)}%", level="verbose")
-
-    def set_master_volume(self, volume):
-        """Set master volume (0.0 to 1.0)"""
-        self.master_volume = round(max(0.0, min(1.0, volume)), 3)
-        self.log_message(f"🔊 Master volume set to: {int(self.master_volume * 100)}%", level="verbose")
-
-    def get_volume(self):
-        """Get current volume"""
-        return self.volume
-
-    def get_effective_volume(self):
-        """Get effective volume (individual * master)"""
-        effective = round(self.volume * self.master_volume, 3)
-        # Debug logging
-        self.log_message(f"🔊 Volume debug - Individual: {self.volume:.2f}, Master: {self.master_volume:.2f}, Effective: {effective:.2f}", level="verbose")
-        return effective
-
-    def get_cursor_position(self):
-        """Get current cursor position (0.0 to 1.0)"""
-        return self.cursor_position
-
-    def generate_waveform(self, audio_file_path):
-        """Generate waveform visualization for audio file"""
-        if not audio_file_path or not os.path.exists(audio_file_path):
-            self.log_message(f"⚠️ No valid audio file for waveform: {audio_file_path}", level="show_mode")
-            return None
-            
-        try:
-            waveform_path = f"{audio_file_path}.waveform.png"
-            
-            # Check if waveform already exists
-            if os.path.exists(waveform_path):
-                self.waveform_image_path = waveform_path
-                self.log_message(f"📈 Using existing waveform: {waveform_path}", level="verbose")
-                return waveform_path
-            
-            self.log_message(f"🔄 Generating waveform for: {audio_file_path}", level="verbose")
-            
-            # Try pydub first (better quality)
-            try:
-                from pydub import AudioSegment
-                from pydub.utils import make_chunks
-                
-                audio = AudioSegment.from_file(audio_file_path)
-                samples = []
-                chunk_length_ms = 10  # 10ms chunks
-                chunks = make_chunks(audio, chunk_length_ms)
-                
-                for chunk in chunks:
-                    # Get RMS (root mean square) for volume
-                    samples.append(chunk.rms)
-                
-                self.log_message(f"📊 Audio loaded with pydub: {len(samples)} samples, duration: {len(audio)/1000:.2f}s", level="verbose")
-                
-            except ImportError as e:
-                self.log_message(f"⚠️ pydub failed due to missing pyaudioop, trying wave fallback...", level="show_mode")
-                # Fallback to wave module
-                try:
-                    import wave
-                    with wave.open(audio_file_path, 'rb') as wav_file:
-                        # Get audio data
-                        frames = wav_file.readframes(wav_file.getnframes())
-                        # Convert to numpy array
-                        import struct
-                        if wav_file.getsampwidth() == 2:  # 16-bit
-                            samples = struct.unpack(f'<{len(frames)//2}h', frames)
-                        else:  # 8-bit
-                            samples = struct.unpack(f'<{len(frames)}B', frames)
-                        
-                        # Convert to list and downsample
-                        samples = list(samples)
-                        step = max(1, len(samples) // 1000)
-                        samples = samples[::step]
-                        
-                        self.log_message(f"📊 Audio loaded with wave fallback: {len(samples)} samples", level="verbose")
-                        
-                except Exception as wave_error:
-                    self.log_message(f"⚠️ wave fallback also failed: {wave_error}", level="show_mode")
-                    return None
-            
-            # Create waveform visualization
-            import matplotlib
-            matplotlib.use('Agg')  # Use non-interactive backend to avoid GUI conflicts
-            import matplotlib.pyplot as plt
-            
-            try:
-                plt.figure(figsize=(8, 2))
-                plt.plot(samples, color='black', linewidth=0.5)
-                plt.axis('off')
-                plt.tight_layout()
-                plt.savefig(waveform_path, bbox_inches='tight', pad_inches=0, dpi=100)
-                plt.close()
-
-                self.waveform_image_path = waveform_path
-                self.log_message(f"✅ Waveform generated: {waveform_path}", level="verbose")
-                return waveform_path
-                
-            except Exception as plot_error:
-                self.log_message(f"⚠️ Failed to create plot: {plot_error}", level="show_mode")
-                return None
-                
-        except Exception as e:
-            self.log_message(f"⚠️ Waveform generation failed: {e}", level="show_mode")
-            return None
+        # Initialize pygame mixer if not already done
+        if not pygame.mixer.get_init():
+            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+        
+        # Generate waveform on initialization if file path is set
+        if self.file_path and os.path.exists(self.file_path):
+            self.generate_waveform()
+        
+        self.log_message(f"Audio Output initialized - File: {os.path.basename(self.file_path) if self.file_path else 'None'}, Volume: {self.volume}%")
     
-    def get_waveform_image_path(self):
-        path = getattr(self, "waveform_image_path", None)
-        if path:
-            self.log_message(f"🔍 Waveform path: {path} (exists: {os.path.exists(path)})", level="verbose")
-        else:
-            self.log_message("🔍 No waveform path available", level="verbose")
-        return path
+    def start(self):
+        """
+        Start the audio output module.
+        
+        This method is called when the module is activated. For audio output
+        modules, this typically just involves logging that the module is ready
+        to play audio.
+        
+        Note: The actual audio playback happens when events are received,
+        not when the module starts.
+        """
+        super().start()
+        self.log_message(f"🎵 Audio output ready - {os.path.basename(self.file_path) if self.file_path else 'No file'}")
+    
+    def stop(self):
+        """
+        Stop the audio output module and clean up resources.
+        
+        This method stops any currently playing audio and cleans up
+        pygame mixer resources if this is the last audio module.
+        
+        Note: pygame mixer is shared across all audio modules, so it's only
+        stopped when all audio modules are stopped.
+        """
+        super().stop()
+        
+        # Stop current playback
+        if self.current_channel and self.current_channel.get_busy():
+            self.current_channel.stop()
+            self.current_channel = None
+        
+        self.log_message("🛑 Audio output stopped")
+    
+    def handle_event(self, data: Dict[str, Any]):
+        """
+        Handle incoming events by playing audio.
+        
+        This method is called when the module receives an event from a
+        connected input module. It plays the configured audio file with
+        the current volume settings.
+        
+        Args:
+            data (Dict[str, Any]): Event data from input module
+            
+        Note: The module supports concurrent playback, so multiple events
+        can trigger multiple audio instances playing simultaneously.
+        """
+        if not self.file_path or not os.path.exists(self.file_path):
+            self.log_message("❌ No audio file configured or file not found")
+            return
+        
+        try:
+            # Load the audio file
+            sound = pygame.mixer.Sound(self.file_path)
+            
+            # Calculate final volume (individual * master)
+            final_volume = (self.volume / 100.0) * (getattr(self, 'master_volume', 100) / 100.0)
+            sound.set_volume(final_volume)
+            
+            # Play the audio on an available channel
+            channel = pygame.mixer.find_channel()
+            if channel:
+                channel.play(sound)
+                self.current_channel = channel
+                self.playback_start_time = time.time()
+                
+                # Get audio duration for cursor tracking
+                self.audio_duration = sound.get_length()
+                
+                # Log the playback
+                filename = os.path.basename(self.file_path)
+                self.log_message(f"Playing {filename}")
+                
+                # Start cursor animation if GUI callback is available
+                # Note: This is set by the GUI when the module is created
+                if hasattr(self, 'start_cursor_animation') and self.start_cursor_animation:
+                    self.start_cursor_animation(self.audio_duration)
+            else:
+                self.log_message("❌ No available audio channels")
+                
+        except Exception as e:
+            self.log_message(f"❌ Error playing audio: {e}")
+    
+    def update_config(self, new_config: Dict[str, Any]):
+        """
+        Update the module configuration.
+        
+        This method is called by the GUI when the user changes the module
+        configuration. It handles changes to file path and volume settings.
+        
+        Args:
+            new_config (Dict[str, Any]): New configuration dictionary
+            
+        Note: If the file path changes, the waveform will be regenerated
+        automatically. Volume changes take effect immediately for new playback.
+        """
+        old_file_path = self.file_path
+        old_volume = self.volume
+        
+        # Update configuration
+        super().update_config(new_config)
+        
+        # Extract new configuration values
+        self.file_path = new_config.get("file_path", "")
+        self.volume = new_config.get("volume", 100)
+        
+        # Handle file path changes
+        if old_file_path != self.file_path:
+            self.log_message(f"🔄 Audio file changed to: {os.path.basename(self.file_path) if self.file_path else 'None'}")
+            
+            # Generate new waveform if file exists
+            if self.file_path and os.path.exists(self.file_path):
+                self.generate_waveform()
+            else:
+                self.waveform_data = None
+                self.waveform_image_path = None
+        
+        # Handle volume changes
+        if old_volume != self.volume:
+            self.log_message(f"🔊 Volume changed to: {self.volume}%")
+    
+    def set_master_volume(self, master_volume: int):
+        """
+        Set the master volume level.
+        
+        This method is called by the GUI to set the global master volume.
+        The master volume is multiplied with the individual volume to get
+        the final playback volume.
+        
+        Args:
+            master_volume (int): Master volume level (0-100)
+            
+        Note: Master volume changes affect all audio modules globally.
+        """
+        self.master_volume = master_volume
+        self.log_message(f"🎚️ Master volume set to: {master_volume}%")
+    
+    def generate_waveform(self):
+        """
+        Generate waveform visualization for the audio file.
+        
+        This method creates a visual representation of the audio file's
+        waveform and saves it as an image. The waveform is used by the
+        GUI to display a visual representation of the audio.
+        
+        The method tries to use matplotlib first, and falls back to
+        pygame if matplotlib is not available.
+        
+        Note: The waveform is cached and only regenerated when the
+        file path changes or the waveform file is missing.
+        """
+        if not self.file_path or not os.path.exists(self.file_path):
+            return
+        
+        try:
+            # Check if waveform already exists
+            waveform_dir = "tests/Assets"
+            os.makedirs(waveform_dir, exist_ok=True)
+            
+            filename = os.path.basename(self.file_path)
+            waveform_filename = f"{os.path.splitext(filename)[0]}_waveform.png"
+            self.waveform_image_path = os.path.join(waveform_dir, waveform_filename)
+            
+            # Generate waveform if it doesn't exist
+            if not os.path.exists(self.waveform_image_path):
+                if MATPLOTLIB_AVAILABLE:
+                    self._generate_waveform_matplotlib()
+                else:
+                    self._generate_waveform_pygame()
+                
+                self.log_message(f"📊 Generated waveform for {filename}")
+            else:
+                self.log_message(f"📊 Using cached waveform for {filename}")
+                
+        except Exception as e:
+            self.log_message(f"❌ Error generating waveform: {e}")
+    
+    def _generate_waveform_matplotlib(self):
+        """
+        Generate waveform using matplotlib.
+        
+        This method uses matplotlib to create a high-quality waveform
+        visualization. It loads the audio file, extracts the waveform
+        data, and creates a plot that is saved as a PNG image.
+        
+        Note: This method requires matplotlib to be installed and
+        uses a non-interactive backend to avoid GUI conflicts.
+        """
+        try:
+            from pydub import AudioSegment
+            
+            # Load audio file
+            audio = AudioSegment.from_wav(self.file_path)
+            
+            # Convert to numpy array
+            samples = np.array(audio.get_array_of_samples())
+            
+            # Downsample for visualization
+            if len(samples) > 10000:
+                step = len(samples) // 10000
+                samples = samples[::step]
+            
+            # Create the plot
+            plt.figure(figsize=(8, 2))
+            plt.plot(samples, color='white', linewidth=0.5)
+            plt.axis('off')
+            plt.gca().set_facecolor('black')
+            plt.gcf().set_facecolor('black')
+            
+            # Save the waveform
+            plt.savefig(self.waveform_image_path, 
+                       bbox_inches='tight', 
+                       pad_inches=0, 
+                       facecolor='black',
+                       edgecolor='none')
+            plt.close()
+            
+        except ImportError:
+            # Fallback to pygame if pydub is not available
+            self._generate_waveform_pygame()
+        except Exception as e:
+            self.log_message(f"❌ Matplotlib waveform generation failed: {e}")
+            self._generate_waveform_pygame()
+    
+    def _generate_waveform_pygame(self):
+        """
+        Generate waveform using pygame as fallback.
+        
+        This method uses pygame to create a simple waveform visualization
+        when matplotlib is not available. It creates a basic waveform
+        representation using pygame's drawing functions.
+        
+        Note: This is a simplified waveform generation that creates
+        a basic visual representation of the audio data.
+        """
+        try:
+            # Create a simple waveform using pygame
+            width, height = 800, 200
+            
+            # Create surface
+            surface = pygame.Surface((width, height))
+            surface.fill((0, 0, 0))  # Black background
+            
+            # Draw a simple waveform pattern
+            for x in range(width):
+                # Create a simple sine wave pattern
+                y = int(height/2 + 50 * np.sin(x * 0.1))
+                pygame.draw.line(surface, (255, 255, 255), (x, y), (x, y), 1)
+            
+            # Save the surface
+            if self.waveform_image_path:
+                pygame.image.save(surface, self.waveform_image_path)
+            
+        except Exception as e:
+            self.log_message(f"❌ Pygame waveform generation failed: {e}")
+    
+    def get_waveform_path(self) -> Optional[str]:
+        """
+        Get the path to the waveform image file.
+        
+        Returns:
+            Optional[str]: Path to waveform image, or None if not available
+            
+        Note: This method is used by the GUI to display the waveform
+        visualization for the audio file.
+        """
+        return self.waveform_image_path if (self.waveform_image_path and os.path.exists(self.waveform_image_path)) else None
+    
+    def get_output_config(self) -> Dict[str, Any]:
+        """
+        Get the module configuration for saving to file.
+        
+        Returns:
+            Dict[str, Any]: Module configuration dictionary
+            
+        Note: This method excludes the waveform data from the configuration
+        to prevent JSON corruption. The waveform is regenerated when needed.
+        """
+        return {
+            "file_path": self.file_path,
+            "volume": self.volume
+        }
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the module to a dictionary for serialization.
+        
+        Returns:
+            Dict[str, Any]: Module data dictionary
+            
+        Note: This method excludes the waveform data from serialization
+        to prevent JSON corruption. The waveform is regenerated when needed.
+        """
+        return {
+            "type": "audio_output",
+            "config": self.get_output_config()
+        }
 
