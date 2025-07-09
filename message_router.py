@@ -3,7 +3,7 @@ import json
 from module_loader import ModuleLoader
 
 
-CONFIG_PATH = os.path.join("config", "interactions")
+CONFIG_PATH = os.path.join("config", "interactions", "interactions.json")
 
 
 class MessageRouter:
@@ -16,49 +16,48 @@ class MessageRouter:
         self.running_modules = []  # all module instances (to stop later)
 
     def load_interactions(self):
-        interaction_files = [
-            f for f in os.listdir(CONFIG_PATH) if f.endswith(".json")
-        ]
-        for fname in interaction_files:
-            fpath = os.path.join(CONFIG_PATH, fname)
-            with open(fpath, "r") as f:
-                data = json.load(f)
+    if not os.path.exists(CONFIG_PATH):
+        self.log("⚠️ No interaction config found.")
+        return
 
-            input_cfg = data.get("input")
-            output_cfg = data.get("output")
-            if not input_cfg or not output_cfg:
-                self.log(f"⚠️ Invalid interaction file: {fname}")
-                continue
+    with open(CONFIG_PATH, "r") as f:
+        data = json.load(f)
 
-            input_module = self.loader.create_instance(
-                input_cfg["module"],
-                input_cfg["config"],
-                log_callback=self.log
-            )
-            output_module = self.loader.create_instance(
-                output_cfg["module"],
-                output_cfg["config"],
-                log_callback=self.log
-            )
+    for interaction in data.get("interactions", []):
+        input_cfg = interaction.get("input")
+        output_cfg = interaction.get("output")
+        if not input_cfg or not output_cfg:
+            self.log("⚠️ Skipping invalid interaction.")
+            continue
 
-            # Attach input callback
-            def make_callback(output):
-                def handler(data=None):
-                    self.log(f"📤 Event triggered → {output_cfg['module']}")
-                    output.handle_event(data)
-                return handler
+        input_module = self.loader.create_instance(
+            input_cfg["module"],
+            input_cfg["config"],
+            log_callback=self.log
+        )
+        output_module = self.loader.create_instance(
+            output_cfg["module"],
+            output_cfg["config"],
+            log_callback=self.log
+        )
 
-            if hasattr(input_module, "set_event_callback"):
-                input_module.set_event_callback(make_callback(output_module))
-            else:
-                self.log(f"⚠️ {input_cfg['module']} does not support event callbacks")
+        def make_callback(output):
+            def handler(data=None):
+                self.log(f"📤 Event triggered → {output_cfg['module']}")
+                output.handle_event(data)
+            return handler
 
-            self.routes.append({
-                "input": input_module,
-                "output": output_module
-            })
+        if hasattr(input_module, "set_event_callback"):
+            input_module.set_event_callback(make_callback(output_module))
+        else:
+            self.log(f"⚠️ {input_cfg['module']} does not support event callbacks")
 
-            self.running_modules.extend([input_module, output_module])
+        self.routes.append({
+            "input": input_module,
+            "output": output_module
+        })
+
+        self.running_modules.extend([input_module, output_module])
 
     def start_all(self):
         for route in self.routes:

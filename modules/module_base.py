@@ -3,7 +3,7 @@ import os
 from abc import ABC, abstractmethod
 
 
-class BaseModule(ABC):
+class ModuleBase(ABC):
     def __init__(self, config: dict, manifest: dict, log_callback=print):
         """
         config: instance-specific settings for this module (from interaction_X.json)
@@ -14,6 +14,7 @@ class BaseModule(ABC):
         self.manifest = manifest
         self.log = log_callback
         self.running = False
+        self.event_callback = None
 
     @abstractmethod
     def start(self):
@@ -33,20 +34,36 @@ class BaseModule(ABC):
         self.config = new_config
         self.log_message("Configuration updated.")
 
-    def log_message(self, msg: str):
+    def log_message(self, msg: str, level="show_mode"):
+        """
+        Log a message with the specified level.
+        level: "no_log", "output_trigger", "show_mode", "verbose"
+        """
         name = self.manifest.get("name", "UnnamedModule")
-        self.log(f"[{name}] {msg}")
+        
+        # Handle different log levels
+        if hasattr(self.log, level):
+            # If the logger supports the new system, use the appropriate method
+            getattr(self.log, level)(f"[{name}] {msg}")
+        else:
+            # Fallback to the old system
+            self.log(f"[{name}] {msg}")
 
     def set_event_callback(self, callback_fn):
         """
         Optional. Input modules can override this method to accept
         a function to call when an event is triggered.
         """
-        pass
+        self.event_callback = callback_fn
 
-    def handle_event(self, data=None):
+    def handle_event(self, event_data):
         """
         Optional. Output modules can override this method to respond
         to events triggered by input modules.
         """
-        pass
+        if self.event_callback:
+            self.event_callback(event_data)
+            
+    def emit_event(self, event_data):
+        if self.event_callback:
+            self.event_callback(event_data)

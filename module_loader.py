@@ -9,7 +9,7 @@ class ModuleLoader:
     def __init__(self):
         self.module_registry = {}  # module_name: { manifest, class_ref }
 
-    def discover_modules(self):
+    def discover_modules(self, log_callback=print):
         for folder in os.listdir(MODULES_PATH):
             folder_path = os.path.join(MODULES_PATH, folder)
             if not os.path.isdir(folder_path):
@@ -38,13 +38,15 @@ class ModuleLoader:
                     "class_ref": class_ref,
                     "folder": folder
                 }
-                print(f"✅ Registered module: '{folder}' as '{manifest.get('name', 'Unnamed')}'")
+                log_callback(f"✅ Registered module: '{folder}' as '{manifest.get('name', 'Unnamed')}'")
 
             except Exception as e:
-                print(f"⚠️ Failed to load module '{folder}': {e}")
+                log_callback(f"⚠️ Failed to load module '{folder}': {e}")
 
     def _import_class(self, filepath, class_name):
         spec = importlib.util.spec_from_file_location(class_name, filepath)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Could not load spec for {filepath}")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return getattr(module, class_name)

@@ -1,0 +1,36 @@
+{
+  "interactions": [
+    {
+      "input": {
+        "module": "osc_input",
+        "config": {
+          "port": "8000",
+          "address": "/other"
+        }
+      },
+      "output": {
+        "module": "audio_output",
+        "config": {
+          "file_path": "C:/Users/Kaiman/Desktop/Interaction/tests/Assets/Toy.wav",
+          "volume": 9.2
+        }
+      }
+    },
+    {
+      "input": {
+        "module": "osc_input",
+        "config": {
+          "port": "8000",
+          "address": "/test"
+        }
+      },
+      "output": {
+        "module": "audio_output",
+        "config": {
+          "file_path": "C:/Users/Kaiman/Desktop/Interaction/tests/Assets/Sweep.wav",
+          "volume": 100.0
+        }
+      }
+    }
+  ]
+}

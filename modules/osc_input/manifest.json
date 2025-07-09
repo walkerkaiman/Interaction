@@ -1,21 +1,27 @@
 {
   "type": "input",
   "name": "OSC Receiver",
-  "description": "Listens for OSC messages and triggers events.",
+  "description": "Receives OSC messages and emits events.",
   "entry_point": "osc_input.py",
   "class_name": "OSCInput",
   "fields": [
     {
       "name": "port",
       "label": "Port",
-      "type": "int",
-      "default": 9000
+      "type": "number",
+      "default": 8000
     },
     {
-      "name": "osc_address",
+      "name": "address",
       "label": "OSC Address",
       "type": "text",
       "default": "/trigger"
+    },
+    {
+      "name": "restart_button",
+      "label": "Restart Server",
+      "type": "button",
+      "action": "restart_server"
     }
   ]
 }
