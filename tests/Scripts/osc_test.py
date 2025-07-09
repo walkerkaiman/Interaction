@@ -11,7 +11,6 @@ client = SimpleUDPClient(TARGET_IP, TARGET_PORT)
 
 # Send test messages
 print(f"Sending OSC messages to {TARGET_IP}:{TARGET_PORT} at address {OSC_ADDRESS}")
-for i in range(10):
-    client.send_message(OSC_ADDRESS, f"test {i}")
-    print(f"Sent: {OSC_ADDRESS} test {i}")
-    time.sleep(1)
+
+client.send_message(OSC_ADDRESS, f"test {1}")
+print(f"Sent: {OSC_ADDRESS} test {1}")

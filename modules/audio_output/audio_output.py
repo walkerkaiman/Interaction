@@ -105,6 +105,7 @@ class AudioOutputModule(ModuleBase):
             self.generate_waveform()
         
         self.log_message(f"Audio Output initialized - File: {os.path.basename(self.file_path) if self.file_path else 'None'}, Volume: {self.volume}%")
+        self._cursor_callback = None  # Store the GUI cursor callback
     
     def start(self):
         """
@@ -180,9 +181,8 @@ class AudioOutputModule(ModuleBase):
                 self.log_message(f"Playing {filename}")
                 
                 # Start cursor animation if GUI callback is available
-                # Note: This is set by the GUI when the module is created
-                if hasattr(self, 'start_cursor_animation') and self.start_cursor_animation:
-                    self.start_cursor_animation(self.audio_duration)
+                if self._cursor_callback:
+                    self._cursor_callback(self.audio_duration)
             else:
                 self.log_message("❌ No available audio channels")
                 
@@ -261,12 +261,13 @@ class AudioOutputModule(ModuleBase):
             return
         
         try:
-            # Check if waveform already exists
-            waveform_dir = "tests/Assets"
+            # Save waveform images in the module's own waveform directory
+            module_dir = os.path.dirname(os.path.abspath(__file__))
+            waveform_dir = os.path.join(module_dir, "waveform")
             os.makedirs(waveform_dir, exist_ok=True)
             
             filename = os.path.basename(self.file_path)
-            waveform_filename = f"{os.path.splitext(filename)[0]}_waveform.png"
+            waveform_filename = f"{filename}.waveform.png"
             self.waveform_image_path = os.path.join(waveform_dir, waveform_filename)
             
             # Generate waveform if it doesn't exist
@@ -333,34 +334,55 @@ class AudioOutputModule(ModuleBase):
     def _generate_waveform_pygame(self):
         """
         Generate waveform using pygame as fallback.
-        
-        This method uses pygame to create a simple waveform visualization
-        when matplotlib is not available. It creates a basic waveform
-        representation using pygame's drawing functions.
-        
-        Note: This is a simplified waveform generation that creates
-        a basic visual representation of the audio data.
+        This method uses pygame to create a waveform visualization from the actual audio data.
+        If the file is not a valid WAV, it draws a red X and logs an error.
         """
+        import wave
         try:
-            # Create a simple waveform using pygame
             width, height = 800, 200
-            
-            # Create surface
             surface = pygame.Surface((width, height))
             surface.fill((0, 0, 0))  # Black background
-            
-            # Draw a simple waveform pattern
-            for x in range(width):
-                # Create a simple sine wave pattern
-                y = int(height/2 + 50 * np.sin(x * 0.1))
-                pygame.draw.line(surface, (255, 255, 255), (x, y), (x, y), 1)
-            
+            # Try to read the WAV file
+            try:
+                with wave.open(self.file_path, 'rb') as wf:
+                    n_channels = wf.getnchannels()
+                    n_frames = wf.getnframes()
+                    sampwidth = wf.getsampwidth()
+                    framerate = wf.getframerate()
+                    frames = wf.readframes(n_frames)
+                # Convert to numpy array
+                import numpy as np
+                dtype = {1: np.int8, 2: np.int16, 4: np.int32}.get(sampwidth, np.int16)
+                samples = np.frombuffer(frames, dtype=dtype)
+                if n_channels > 1:
+                    samples = samples[::n_channels]  # Use first channel
+                # Downsample for visualization
+                if len(samples) > width:
+                    step = len(samples) // width
+                    samples = samples[::step][:width]
+                else:
+                    samples = np.pad(samples, (0, width - len(samples)), 'constant')
+                # Normalize to -1..1
+                samples = samples.astype(np.float32)
+                if np.max(np.abs(samples)) > 0:
+                    samples /= np.max(np.abs(samples))
+                # Draw waveform
+                mid = height // 2
+                amp = (height // 2) * 0.9
+                points = [(x, int(mid - s * amp)) for x, s in enumerate(samples)]
+                for x in range(1, len(points)):
+                    pygame.draw.line(surface, (255, 255, 255), points[x-1], points[x], 1)
+                self.log_message(f"📊 Generated waveform (pygame) for {os.path.basename(self.file_path)}")
+            except Exception as e:
+                # Draw a red X if file is not a valid WAV
+                pygame.draw.line(surface, (255, 0, 0), (0, 0), (width, height), 3)
+                pygame.draw.line(surface, (255, 0, 0), (0, height), (width, 0), 3)
+                self.log_message(f"❌ Pygame waveform generation failed: {e}")
             # Save the surface
             if self.waveform_image_path:
                 pygame.image.save(surface, self.waveform_image_path)
-            
         except Exception as e:
-            self.log_message(f"❌ Pygame waveform generation failed: {e}")
+            self.log_message(f"❌ Pygame waveform generation outer error: {e}")
     
     def get_waveform_path(self) -> Optional[str]:
         """
@@ -372,7 +394,29 @@ class AudioOutputModule(ModuleBase):
         Note: This method is used by the GUI to display the waveform
         visualization for the audio file.
         """
-        return self.waveform_image_path if (self.waveform_image_path and os.path.exists(self.waveform_image_path)) else None
+        # Always recalculate the expected path based on the new scheme
+        if not self.file_path:
+            return None
+        module_dir = os.path.dirname(os.path.abspath(__file__))
+        waveform_dir = os.path.join(module_dir, "waveform")
+        filename = os.path.basename(self.file_path)
+        waveform_filename = f"{filename}.waveform.png"
+        path = os.path.join(waveform_dir, waveform_filename)
+        return path if os.path.exists(path) else None
+    
+    def get_waveform_image_path(self) -> Optional[str]:
+        """
+        Alias for get_waveform_path, for GUI compatibility.
+        """
+        return self.get_waveform_path()
+    
+    def get_waveform_label(self) -> str:
+        """
+        Return the label to display above the waveform: the filename if loaded, otherwise 'Playback'.
+        """
+        if self.file_path:
+            return os.path.basename(self.file_path)
+        return "Playback"
     
     def get_output_config(self) -> Dict[str, Any]:
         """
@@ -403,4 +447,10 @@ class AudioOutputModule(ModuleBase):
             "type": "audio_output",
             "config": self.get_output_config()
         }
+
+    def set_cursor_callback(self, callback):
+        """
+        Set a callback to be called with the audio duration when playback starts (for GUI cursor animation).
+        """
+        self._cursor_callback = callback
 

@@ -1,29 +1,26 @@
 {
-  "name": "audio_output",
-  "label": "Audio Player",
+  "name": "Audio Output",
   "type": "output",
-  "entry_point": "audio_output.py",
-  "class_name": "AudioOutput",
+  "description": "Audio playback module for playing WAV files with volume control and waveform visualization",
   "fields": [
     {
       "name": "file_path",
+      "type": "text",
       "label": "Audio File",
-      "type": "file",
       "default": ""
     },
     {
       "name": "volume",
-      "label": "Volume",
       "type": "slider",
+      "label": "Volume",
+      "default": 100,
       "min": 0,
-      "max": 100,
-      "default": 100
+      "max": 100
     },
     {
       "name": "waveform",
-      "label": "Waveform",
       "type": "waveform",
-      "read_only": true
+      "label": "Waveform"
     }
   ]
 }

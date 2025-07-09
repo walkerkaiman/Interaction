@@ -105,7 +105,7 @@ class ModuleLoader:
                 continue
             
             # Skip the module_base directory (it's not a module)
-            if item == "module_base":
+            if item == "module_base" or item == "__pycache__":
                 continue
             
             # Look for manifest.json and Python file

@@ -297,7 +297,7 @@ class InteractionBlock:
         input_combo.bind("<<ComboboxSelected>>", self.draw_input_fields)
 
         # Populate input modules
-        input_modules = [name for name, info in self.loader.module_registry.items() if info["manifest"]["type"] == "input"]
+        input_modules = self.loader.get_modules_by_type("input")
         input_combo["values"] = input_modules
 
         self.input_fields_container = ttk.Frame(input_frame, style="Fields.TFrame")
@@ -313,7 +313,7 @@ class InteractionBlock:
         output_combo.bind("<<ComboboxSelected>>", self.draw_output_fields)
 
         # Populate output modules
-        output_modules = [name for name, info in self.loader.module_registry.items() if info["manifest"]["type"] == "output"]
+        output_modules = self.loader.get_modules_by_type("output")
         output_combo["values"] = output_modules
 
         self.output_fields_container = ttk.Frame(output_frame, style="Fields.TFrame")
@@ -336,11 +336,11 @@ class InteractionBlock:
             widget.destroy()
 
         module_name = self.input_var.get()
-        if module_name not in self.loader.module_registry:
-            self.logger.show_mode(f"⚠️ Invalid input module: '{module_name}'")
+        manifest = self.loader.load_manifest(module_name)
+        if manifest is None:
+            # handle error or skip
             return
 
-        manifest = self.loader.module_registry[module_name]["manifest"]
         fields = manifest.get("fields", [])
 
         self.input_config_fields = {}
@@ -368,7 +368,7 @@ class InteractionBlock:
                 
             # Create input instance
             try:
-                self.input_instance = self.loader.create_instance(
+                self.input_instance = self.loader.create_module_instance(
                     module_name,
                     self.get_input_config(),
                     log_callback=self.logger.show_mode
@@ -380,16 +380,14 @@ class InteractionBlock:
     def draw_output_fields(self, event=None):
         for widget in self.output_fields_container.winfo_children():
             widget.destroy()
-
         module_name = self.output_var.get()
-        if module_name not in self.loader.module_registry:
-            self.logger.show_mode(f"⚠️ Invalid output module: '{module_name}'")
+        manifest = self.loader.load_manifest(module_name)
+        if manifest is None:
+            # handle error or skip
             return
-
-        manifest = self.loader.module_registry[module_name]["manifest"]
         fields = manifest.get("fields", [])
-
         self.output_config_fields = {}
+        waveform_label_ref = None
         for field in fields:
             if field["type"] == "button":
                 action = field.get("action", field["name"])
@@ -397,27 +395,25 @@ class InteractionBlock:
                                   command=lambda name=action: self.handle_button_action(name), style="Action.TButton")
                 button.pack(fill="x", pady=5, padx=5)
                 continue
-
             if field["type"] == "waveform":
-                label = ttk.Label(self.output_fields_container, text=field["label"], style="Label.TLabel")
-                label.pack(anchor="w", padx=5, pady=(10, 5))
-
+                # Create a label for the waveform, store reference for later update
+                waveform_label = ttk.Label(self.output_fields_container, text="Waveform", style="Label.TLabel")
+                waveform_label.pack(anchor="w", padx=5, pady=(10, 5))
+                waveform_label_ref = waveform_label
                 # Create waveform container
                 waveform_container = ttk.Frame(self.output_fields_container, style="Fields.TFrame")
                 waveform_container.pack(fill="x", pady=(0, 10), padx=5)
-                
                 # Create canvas for waveform
                 waveform_canvas = tk.Canvas(waveform_container, width=300, height=60, bg="#111", highlightthickness=0)
                 waveform_canvas.pack(fill="x")
-                
                 # Create transparent cursor canvas that overlays the waveform
                 cursor_canvas = tk.Canvas(waveform_container, width=300, height=60, highlightthickness=0)
                 cursor_canvas.place(in_=waveform_container, x=0, y=0, relwidth=1, relheight=1)
-                
                 self.output_config_fields[field["name"]] = {
                     "waveform": waveform_canvas,
                     "cursor": cursor_canvas,
                     "container": waveform_container,
+                    "label": waveform_label,  # Store label reference
                     "start_time": None,
                     "duration": None,
                     "is_playing": False
@@ -466,21 +462,20 @@ class InteractionBlock:
         if self.output_instance and hasattr(self.output_instance, "stop"):
             self.logger.verbose("🛑 Stopping existing output instance...")
             self.output_instance.stop()
-            
         # Create output instance
         try:
-            self.output_instance = self.loader.create_instance(
+            self.output_instance = self.loader.create_module_instance(
                 module_name,
                 self.get_output_config(),
                 log_callback=self.logger.output_trigger
             )
-            
             # Set up cursor callback for audio output
             if hasattr(self.output_instance, 'set_cursor_callback'):
                 self.output_instance.set_cursor_callback(self.start_audio_playback)
-            
             self.connect_modules()
-            
+            # Set the waveform label using the persistent instance
+            if waveform_label_ref and self.output_instance and hasattr(self.output_instance, "get_waveform_label"):
+                waveform_label_ref.config(text=self.output_instance.get_waveform_label())
             # Refresh waveform on startup
             self.logger.verbose("✅ Refreshing waveform on startup...")
             self.refresh_output_module_and_waveform()
@@ -494,13 +489,14 @@ class InteractionBlock:
         config = self.get_output_config()
         try:
             # Create a temporary instance just for waveform generation, don't start it
-            instance = self.loader.create_instance(module_name, config, log_callback=self.logger.verbose)
+            instance = self.loader.create_module_instance(module_name, config, log_callback=self.logger.verbose)
+            # Check for waveform support
             if hasattr(instance, "get_waveform_image_path"):
                 # Try to generate waveform if it doesn't exist
                 if hasattr(instance, "generate_waveform"):
                     file_path = config.get("file_path", "")
                     if file_path:
-                        instance.generate_waveform(file_path)
+                        instance.generate_waveform()
                         img_path = instance.get_waveform_image_path()
                     else:
                         img_path = None
@@ -519,13 +515,14 @@ class InteractionBlock:
                             waveform_canvas.create_image(0, 0, anchor="nw", image=photo)
                             waveform_canvas.image = photo  # Keep a reference
                             waveform_canvas.configure(width=300, height=60)
+                            # Update the label using the persistent instance
+                            if "label" in waveform_widget and self.output_instance and hasattr(self.output_instance, "get_waveform_label"):
+                                waveform_widget["label"].config(text=self.output_instance.get_waveform_label())
                             self.logger.verbose(f"✅ Waveform image loaded and displayed on canvas")
-                            
                             # Also update cursor canvas size to match
                             if "cursor" in waveform_widget:
                                 cursor_canvas = waveform_widget["cursor"]
                                 cursor_canvas.configure(width=300, height=60)
-                            
                         else:
                             self.logger.verbose(f"⚠️ No waveform widget found in output config fields")
                     except ImportError as e:
@@ -533,11 +530,15 @@ class InteractionBlock:
                     except Exception as e:
                         self.logger.show_mode(f"⚠️ Failed to load waveform image: {e}")
                 else:
+                    # Set label using the persistent instance if available
+                    waveform_widget = self.output_config_fields.get("waveform")
+                    if waveform_widget and "label" in waveform_widget and self.output_instance and hasattr(self.output_instance, "get_waveform_label"):
+                        waveform_widget["label"].config(text=self.output_instance.get_waveform_label())
                     self.logger.verbose(f"⚠️ Waveform file not found: {img_path}")
                     if img_path:
                         self.logger.verbose(f"💡 File exists: {os.path.exists(img_path)}")
             else:
-                self.logger.verbose(f"⚠️ Module {module_name} doesn't have waveform support")
+                self.logger.show_mode(f"⚠️ Module {module_name} doesn't have waveform support (missing get_waveform_image_path)")
         except Exception as e:
             self.logger.show_mode(f"⚠️ Failed to refresh waveform: {e}")
 
@@ -548,6 +549,9 @@ class InteractionBlock:
             entry_widget.insert(0, file_path)
             self.on_change()
             self.logger.show_mode(f"✅ File selected, refreshing waveform...")
+            # Update output_instance config before refreshing waveform
+            if self.output_instance and hasattr(self.output_instance, "update_config"):
+                self.output_instance.update_config(self.get_output_config())
             # Refresh waveform after file selection
             self.refresh_output_module_and_waveform()
             
@@ -555,6 +559,9 @@ class InteractionBlock:
         """Called when the file path is changed manually"""
         self.on_change()
         self.logger.verbose(f"✅ File path changed, refreshing waveform...")
+        # Update output_instance config before refreshing waveform
+        if self.output_instance and hasattr(self.output_instance, "update_config"):
+            self.output_instance.update_config(self.get_output_config())
         # Refresh waveform after manual path change
         self.refresh_output_module_and_waveform()
 
@@ -565,7 +572,7 @@ class InteractionBlock:
             return
 
         try:
-            instance = self.loader.create_instance(output_module, self.get_output_config(), log_callback=self.logger.output_trigger)
+            instance = self.loader.create_module_instance(output_module, self.get_output_config(), log_callback=self.logger.output_trigger)
             
             # Set cursor callback on the instance
             if hasattr(instance, "set_cursor_callback"):
@@ -613,7 +620,7 @@ class InteractionBlock:
         self.input_var.set(input_module)
         self.output_var.set(output_module)
 
-        if input_module in self.loader.module_registry:
+        if self.loader.load_manifest(input_module) is not None:
             # First populate the GUI fields with saved values (don't create instance yet)
             self.draw_input_fields(create_instance=False)
             for k, v in preset["input"].get("config", {}).items():
@@ -622,7 +629,7 @@ class InteractionBlock:
                     self.input_config_fields[k].insert(0, v)
             
             # Now create instance with the populated config values
-            self.input_instance = self.loader.create_instance(
+            self.input_instance = self.loader.create_module_instance(
                 input_module,
                 self.get_input_config(),
                 log_callback=self.logger.show_mode
@@ -632,7 +639,7 @@ class InteractionBlock:
         else:
             self.logger.output_trigger(f"⚠️ Invalid input module: '{input_module}'")
 
-        if output_module in self.loader.module_registry:
+        if self.loader.load_manifest(output_module) is not None:
             self.draw_output_fields()
             for k, v in preset["output"].get("config", {}).items():
                 if k in self.output_config_fields:
@@ -651,7 +658,7 @@ class InteractionBlock:
                         # Handle other field types
                         self.logger.output_trigger(f"⚠️ Unknown field type for {k}: {type(field)}")
             
-            self.output_instance = self.loader.create_instance(
+            self.output_instance = self.loader.create_module_instance(
                 output_module,
                 self.get_output_config(),
                 log_callback=self.logger.output_trigger
@@ -716,8 +723,12 @@ class InteractionBlock:
                 if self.output_instance:
                     self.output_instance.handle_event(data)
             
-            self.input_instance.set_event_callback(dynamic_event_callback)
-            self.logger.show_mode("🔗 Connected input to output with dynamic config")
+            # Only call set_event_callback if it exists
+            if hasattr(self.input_instance, "set_event_callback"):
+                self.input_instance.set_event_callback(dynamic_event_callback)
+                self.logger.show_mode("🔗 Connected input to output with dynamic config")
+            else:
+                self.logger.show_mode("⚠️ Input module does not support set_event_callback")
 
     def on_slider_change(self, field, value):
         """Called when a slider value changes"""
@@ -778,7 +789,7 @@ class InteractionGUI:
         update_osc_manager_logger(self.logger)
         
         self.loader = ModuleLoader()
-        self.loader.discover_modules(log_callback=self.logger.show_mode)
+        # self.loader.discover_modules()  # Removed redundant call
 
         self.blocks = []
         self.installation_label = None
@@ -906,7 +917,8 @@ class InteractionGUI:
                                       state="readonly", width=20, style="Combo.TCombobox")
         log_level_combo.pack(side="left")
         log_level_combo.bind("<<ComboboxSelected>>", self.on_log_level_change)
-
+        # Add Clean Console button
+        ttk.Button(log_control_frame, text="Clean Console", command=self.clean_console, style="Remove.TButton").pack(side="left", padx=(10, 0))
         self.log_text = tk.Text(log_frame, height=8, bg="#2a2a2a", fg="#00ff00", 
                                font=("Consolas", 10), relief="flat", bd=0)
         self.log_text.pack(fill="both")
@@ -1004,6 +1016,10 @@ class InteractionGUI:
         
         # Update OSC manager to use our logger
         update_osc_manager_logger(self.logger)
+
+    def clean_console(self):
+        """Erase all content in the log_text widget (console)."""
+        self.log_text.delete('1.0', tk.END)
 
     def cleanup(self):
         """Clean up resources before shutdown"""

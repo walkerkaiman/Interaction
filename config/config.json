@@ -3,5 +3,5 @@
   "theme": "dark",
   "version": "1.0.0",
   "master_volume": 37.3,
-  "log_level": "Show Mode"
+  "log_level": "Only Output Triggers"
 }

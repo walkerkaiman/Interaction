@@ -88,6 +88,8 @@ class OSCInputModule(ModuleBase):
         self.server_thread = None
         self.is_running = False
         
+        self._event_callback = None  # Add this line to store the callback
+        
         # Log initialization
         self.log_message(f"OSC Input initialized - Port: {self.port}, Address: {self.address}")
     
@@ -175,6 +177,12 @@ class OSCInputModule(ModuleBase):
                 time.sleep(0.1)  # Brief delay to ensure cleanup
                 self.start()
     
+    def set_event_callback(self, callback):
+        """
+        Set a callback to be called when an OSC event is received.
+        """
+        self._event_callback = callback
+    
     def _handle_osc_message(self, address: str, *args):
         """
         Handle incoming OSC messages and convert them to events.
@@ -212,6 +220,10 @@ class OSCInputModule(ModuleBase):
             
             # Log the received message
             self.log_message(f"📨 OSC message received: {address} {args}")
+            
+            # Call the event callback if set
+            if self._event_callback:
+                self._event_callback(event_data)
             
             # Emit the event to connected output modules
             self.emit_event(event_data)
