@@ -291,6 +291,8 @@ class SerialTriggerModule(ModuleBase):
         with self._lock:
             self.current_value = value
 
+        # Removed per-value logging to reduce console noise
+
         # Notify GUI of value update (for display purposes)
         self.notify_gui_update()
 
@@ -357,7 +359,7 @@ class SerialTriggerModule(ModuleBase):
                 'trigger': False,
                 'gui_update': True  # Flag to indicate this is just a GUI update
             }
-            self.log_message(f"📊 GUI Update: Value = {self.current_value:.1f}")
+            # Removed GUI Update logging to reduce console noise
             for callback in list(self._event_callbacks):
                 try:
                     callback(event)

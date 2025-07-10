@@ -159,7 +159,8 @@ class OSCOutputModule(ModuleBase):
             if self.osc_client:
                 try:
                     self.osc_client.send_message(self.osc_address, value)
-                    self.log_message(f"📤 Sent OSC: {self.osc_address} = {value} ({value_type})")
+                    self.log_message(f"OSC Sent: {self.osc_address} = {value}")
+                    print(f"[{time.strftime('%H:%M:%S')}] 📡 OSC SENT: {self.osc_address} = {value} ({value_type}) to {self.ip_address}:{self.port}")
                 except Exception as e:
                     self.log_message(f"❌ Failed to send OSC message: {e}")
                     self.connection_status = f"Send Error: {str(e)}"

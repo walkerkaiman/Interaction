@@ -13,19 +13,20 @@ from module_loader import input_event_router
 # Logging system with different verbosity levels
 class LogLevel:
     NO_LOG = 0
-    OUTPUT_TRIGGERS_ONLY = 1
-    SHOW_MODE = 2
-    VERBOSE = 3
+    OSC = 1
+    SERIAL = 2
+    OUTPUTS = 3
+    VERBOSE = 4
 
 class Logger:
-    def __init__(self, log_callback=None, level=LogLevel.SHOW_MODE):
+    def __init__(self, log_callback=None, level=LogLevel.OUTPUTS):
         self.log_callback = log_callback
         self.level = level
     
     def set_level(self, level):
         self.level = level
     
-    def log(self, message, level=LogLevel.SHOW_MODE):
+    def log(self, message, level=LogLevel.OUTPUTS):
         """Log a message if the current level allows it"""
         if self.level >= level and self.log_callback:
             self.log_callback(message)
@@ -34,13 +35,23 @@ class Logger:
         """Log only when level is VERBOSE"""
         self.log(message, LogLevel.VERBOSE)
     
-    def output_trigger(self, message):
-        """Log only when level is OUTPUT_TRIGGERS_ONLY or higher"""
-        self.log(message, LogLevel.OUTPUT_TRIGGERS_ONLY)
+    def osc(self, message):
+        """Log OSC messages with timestamp, port, address, and message"""
+        if self.level >= LogLevel.OSC:
+            timestamp = time.strftime('%H:%M:%S')
+            self.log(f"[{timestamp}] 📡 {message}", LogLevel.OSC)
     
-    def show_mode(self, message):
-        """Log only when level is SHOW_MODE or higher"""
-        self.log(message, LogLevel.SHOW_MODE)
+    def serial(self, message):
+        """Log serial messages with timestamp, port, and value"""
+        if self.level >= LogLevel.SERIAL:
+            timestamp = time.strftime('%H:%M:%S')
+            self.log(f"[{timestamp}] 🔌 {message}", LogLevel.SERIAL)
+    
+    def outputs(self, message):
+        """Log output triggers with timestamp, module name, and file"""
+        if self.level >= LogLevel.OUTPUTS:
+            timestamp = time.strftime('%H:%M:%S')
+            self.log(f"[{timestamp}] 🎵 {message}", LogLevel.OUTPUTS)
     
     def verbose(self, message):
         """Log only when level is VERBOSE"""
@@ -52,7 +63,7 @@ from modules.osc_input_trigger.osc_server_manager import osc_manager
 # Update the OSC manager to use our logger
 def update_osc_manager_logger(logger):
     """Update the OSC manager to use our logger"""
-    osc_manager.log = logger.show_mode
+    osc_manager.log = logger.osc
 
 # Configuration paths
 CONFIG_PATH = "config/interactions/interactions.json"
@@ -76,7 +87,7 @@ def load_app_config():
         "installation_name": "Default Installation",
         "theme": "dark",
         "version": "1.0.0",
-        "log_level": "Show Mode"
+        "log_level": "Outputs"
     }
     
     if os.path.exists(APP_CONFIG_PATH):
@@ -212,47 +223,47 @@ class InteractionBlock:
                     elif isinstance(field, tk.StringVar):
                         field.set(v)
             # Now create instance with the populated config values
+            # Use appropriate logging method based on module type
+            if input_module == "serial_input_trigger" or input_module == "serial_input_streaming":
+                log_callback = self.logger.serial
+            elif input_module == "osc_input_trigger":
+                log_callback = self.logger.osc
+            else:
+                log_callback = self.logger.verbose
+            
             self.input_instance = self.loader.create_module_instance(
                 input_module,
                 self.get_input_config(),
-                log_callback=self.logger.show_mode
+                log_callback=log_callback
             )
             if self.input_instance:
                 # Add event callback for serial_input_trigger
                 if input_module == "serial_input_trigger":
                     def block_event_callback(data):
-                        self.logger.show_mode(f"🎯 Serial trigger event received: {data}")
+                        # Only log trigger events, not every value
+                        if data.get('trigger', False):
+                            self.logger.verbose(f"🎯 Serial trigger event received: {data}")
                         # Update the current value label immediately, thread-safe
                         current_value_label = self.input_config_fields.get('current_value')
                         if current_value_label:
                             value = data.get('value', 'No data')
                             self.frame.after(0, lambda: current_value_label.config(text=f"Value: {value}"))
-                            self.logger.show_mode(f"🎯 Serial trigger: Updated GUI label to '{value}'")
-                        
                         # Send actual triggers to the output module
                         if data.get('trigger', False):
-                            self.logger.show_mode(f"🎯 Serial trigger: Processing trigger event")
-                            # Direct connection to output module for Serial Trigger
+                            self.logger.verbose(f"🎯 Serial trigger: Processing trigger event")
                             if self.output_instance:
-                                # Update output instance with current config
                                 if hasattr(self.output_instance, "update_config"):
                                     self.output_instance.update_config(self.get_output_config())
-                                # Ensure cursor callback is set
                                 if hasattr(self.output_instance, "set_cursor_callback"):
                                     self.output_instance.set_cursor_callback(self.start_audio_playback)
-                                # Ensure output instance is started
                                 if hasattr(self.output_instance, "start"):
                                     self.output_instance.start()
-                                # Send event to output
                                 self.output_instance.handle_event(data)
-                                self.logger.show_mode(f"🎯 Serial trigger: Sent event to output module")
+                                self.logger.verbose(f"🎯 Serial trigger: Sent event to output module")
                             else:
-                                self.logger.show_mode(f"⚠️ Serial Trigger: No output instance to send event to")
-                        else:
-                            self.logger.show_mode(f"🎯 Serial trigger: Non-trigger event (GUI update only)")
-                    
+                                self.logger.verbose(f"⚠️ Serial Trigger: No output instance to send event to")
                     self.input_instance.add_event_callback(block_event_callback)
-                    self.logger.show_mode(f"🔗 Serial Trigger: Added event callback to module")
+                    self.logger.verbose(f"🔗 Serial Trigger: Added event callback to module")
                 
                 self.input_instance.start()
                 # Special handling for Clock module - start display update
@@ -262,7 +273,7 @@ class InteractionBlock:
                 elif input_module == "serial_input_trigger":
                     self.start_serial_trigger_display_update()
         else:
-            self.logger.output_trigger(f"⚠️ Invalid input module: '{input_module}'")
+            self.logger.verbose(f"⚠️ Invalid input module: '{input_module}'")
         # Populate output fields
         if self.loader.load_manifest(output_module) is not None:
             self.draw_output_fields()
@@ -273,15 +284,29 @@ class InteractionBlock:
                         field.delete(0, tk.END)
                         field.insert(0, v)
                     elif isinstance(field, dict) and "var" in field:
-                        field["var"].set(v)
+                        # Convert volume to integer for slider
+                        if k == "volume":
+                            volume_value = int(float(v))
+                            field["var"].set(volume_value)
+                            # Update the label to match the loaded value
+                            if "label" in field:
+                                field["label"].config(text=f"{volume_value}")
+                        else:
+                            field["var"].set(v)
                     elif isinstance(field, dict) and "waveform" in field:
                         pass
                     else:
-                        self.logger.output_trigger(f"⚠️ Unknown field type for {k}: {type(field)}")
+                        self.logger.verbose(f"⚠️ Unknown field type for {k}: {type(field)}")
+            # Use appropriate logging method for output modules
+            if output_module == "audio_output_trigger" or output_module == "osc_output_trigger" or output_module == "osc_output_streaming":
+                log_callback = self.logger.outputs
+            else:
+                log_callback = self.logger.verbose
+            
             self.output_instance = self.loader.create_module_instance(
                 output_module,
                 self.get_output_config(),
-                log_callback=self.logger.output_trigger
+                log_callback=log_callback
             )
             # Set log level for the new module - default to 'info' for now
             if hasattr(self.output_instance, 'log_level'):
@@ -291,7 +316,7 @@ class InteractionBlock:
             self.logger.verbose("✅ Refreshing waveform on startup...")
             self.refresh_output_module_and_waveform()
         else:
-            self.logger.output_trigger(f"⚠️ Invalid output module: '{output_module}'")
+            self.logger.verbose(f"⚠️ Invalid output module: '{output_module}'")
         # Remove preset reference
         self.preset = None
 
@@ -395,9 +420,9 @@ class InteractionBlock:
                     self.input_var.set("")
                     self.input_instance = None
             else:
-                self.logger.show_mode("⚠️ input_combo reference not found; cannot update input modules.")
+                self.logger.verbose("⚠️ input_combo reference not found; cannot update input modules.")
         except Exception as e:
-            self.logger.show_mode(f"⚠️ Error updating input modules: {e}")
+            self.logger.verbose(f"⚠️ Error updating input modules: {e}")
 
     def on_input_module_selected(self, event=None):
         """
@@ -532,7 +557,7 @@ class InteractionBlock:
         try:
             image = Image.open(img_path)
         except Exception as e:
-            self.logger.output_trigger(f"Waveform error: {e}")
+            self.logger.verbose(f"⚠️ Waveform error: {e}")
             canvas.delete("all")
             return
         def update_canvas(event=None):
@@ -556,7 +581,7 @@ class InteractionBlock:
                 img = Image.open(cursor_path)
                 InteractionBlock.cursor_img = ImageTk.PhotoImage(img)
             except Exception as e:
-                self.logger.output_trigger(f"⚠️ Failed to load cursor image: {e}")
+                self.logger.verbose(f"⚠️ Failed to load cursor image: {e}")
                 InteractionBlock.cursor_img = None
         
         while self.cursor_running:
@@ -750,7 +775,7 @@ class InteractionBlock:
                         if not options:
                             options = ["No ports available"]
                     except Exception as e:
-                        self.logger.show_mode(f"⚠️ Error getting serial ports: {e}")
+                        self.logger.verbose(f"⚠️ Error getting serial ports: {e}")
                         options = ["Error getting ports"]
                 
                 # Create combobox
@@ -845,7 +870,7 @@ class InteractionBlock:
                 try:
                     port = int(port_val)
                 except Exception:
-                    self.logger.output_trigger(f"⚠️ Invalid port: {port_val}")
+                    self.logger.verbose(f"⚠️ Invalid port: {port_val}")
                     return
                 address = config.get("address", "/trigger")
                 key = ("osc_input_trigger", {"port": port, "address": address})
@@ -862,74 +887,74 @@ class InteractionBlock:
                         shared = self.loader.create_module_instance(
                             module_name,
                             {**config, "port": port, "address": address},
-                            log_callback=self.logger.show_mode
+                            log_callback=self.logger.verbose
                         )
                         shared.start()
                         InteractionGUI.osc_input_registry[(port, address)] = shared
                         InteractionGUI.osc_input_refcounts[(port, address)] = 0
                         self.logger.verbose(f"🔗 Created new shared OSCInputModule for {(port, address)}")
                     except Exception as e:
-                        self.logger.show_mode(f"⚠️ Failed to create shared OSC input instance: {e}")
+                        self.logger.verbose(f"⚠️ Failed to create shared OSC input instance: {e}")
                         return
                 self.input_instance = shared
                 InteractionGUI.osc_input_refcounts[(port, address)] += 1
             elif module_name == "clock_input_trigger":
                 # Handle Clock input module
                 def block_event_callback(data):
-                    self.logger.show_mode(f"🔔 Clock event received: {data}")
+                    self.logger.verbose(f"🔔 Clock event received: {data}")
                     # Direct connection to output module for Clock
                     if self.logger.level == "verbose":
-                        self.logger.show_mode(f"🔍 Clock: Checking output_instance - {self.output_instance}")
+                        self.logger.verbose(f"🔍 Clock: Checking output_instance - {self.output_instance}")
                     if self.output_instance:
                         if self.logger.level == "verbose":
-                            self.logger.show_mode(f"🔍 Clock: Output instance type: {type(self.output_instance)}")
+                            self.logger.verbose(f"🔍 Clock: Output instance type: {type(self.output_instance)}")
                         # Update output instance with current config
                         if hasattr(self.output_instance, "update_config"):
                             if self.logger.level == "verbose":
-                                self.logger.show_mode(f"🔍 Clock: Updating output config")
+                                self.logger.verbose(f"🔍 Clock: Updating output config")
                             self.output_instance.update_config(self.get_output_config())
                         # Ensure cursor callback is set
                         if hasattr(self.output_instance, "set_cursor_callback"):
                             if self.logger.level == "verbose":
-                                self.logger.show_mode(f"🔍 Clock: Setting cursor callback")
+                                self.logger.verbose(f"🔍 Clock: Setting cursor callback")
                             self.output_instance.set_cursor_callback(self.start_audio_playback)
                         # Ensure output instance is started
                         if hasattr(self.output_instance, "start"):
                             if self.logger.level == "verbose":
-                                self.logger.show_mode(f"🔍 Clock: Starting output instance")
+                                self.logger.verbose(f"🔍 Clock: Starting output instance")
                             self.output_instance.start()
                         # Send event to output
                         if self.logger.level == "verbose":
-                            self.logger.show_mode(f"📤 Clock: Calling output_instance.handle_event(data)")
+                            self.logger.verbose(f"📤 Clock: Calling output_instance.handle_event(data)")
                         self.output_instance.handle_event(data)
                         if self.logger.level == "verbose":
-                            self.logger.show_mode(f"✅ Clock: handle_event call completed")
+                            self.logger.verbose(f"✅ Clock: handle_event call completed")
                     else:
                         if self.logger.level == "verbose":
-                            self.logger.show_mode(f"⚠️ Clock: No output instance to send event to")
+                            self.logger.verbose(f"⚠️ Clock: No output instance to send event to")
                 
                 try:
                     self.input_instance = self.loader.create_module_instance(
                         module_name,
                         config,
-                        log_callback=self.logger.show_mode
+                        log_callback=self.logger.verbose
                     )
                     # Add the event callback directly to the Clock module
                     self.input_instance.add_event_callback(block_event_callback)
                     if self.logger.level == "verbose":
-                        self.logger.show_mode(f"🔗 Clock: Added event callback to module")
+                        self.logger.verbose(f"🔗 Clock: Added event callback to module")
                     
                     self.input_instance.start()
                     if self.logger.level == "verbose":
-                        self.logger.show_mode(f"🚀 Clock: Module started")
+                        self.logger.verbose(f"🚀 Clock: Module started")
                     # Start the display update immediately
                     self.start_clock_display_update()
                 except Exception as e:
-                    self.logger.show_mode(f"⚠️ Failed to create clock input instance: {e}")
+                    self.logger.verbose(f"⚠️ Failed to create clock input instance: {e}")
             elif module_name == "serial_input_streaming":
                 # Handle Serial input module
                 def block_event_callback(data):
-                    self.logger.show_mode(f"📡 Serial event received: {data}")
+                    self.logger.verbose(f"📡 Serial event received: {data}")
                     # Update the incoming data label immediately
                     incoming_data_label = self.input_config_fields.get('incoming_data')
                     if incoming_data_label:
@@ -949,38 +974,38 @@ class InteractionBlock:
                         # Send event to output
                         self.output_instance.handle_event(data)
                     else:
-                        self.logger.show_mode(f"⚠️ Serial: No output instance to send event to")
+                        self.logger.verbose(f"⚠️ Serial: No output instance to send event to")
                 
                 try:
                     self.input_instance = self.loader.create_module_instance(
                         module_name,
                         config,
-                        log_callback=self.logger.show_mode
+                        log_callback=self.logger.verbose
                     )
                     # Add the event callback directly to the Serial module
                     self.input_instance.add_event_callback(block_event_callback)
-                    self.logger.show_mode(f"🔗 Serial: Added event callback to module")
+                    self.logger.verbose(f"🔗 Serial: Added event callback to module")
                     
                     self.input_instance.start()
-                    self.logger.show_mode(f"🚀 Serial: Module started")
+                    self.logger.verbose(f"🚀 Serial: Module started")
                     # Start the display update immediately
                     self.start_serial_display_update()
                 except Exception as e:
-                    self.logger.show_mode(f"⚠️ Failed to create serial input instance: {e}")
+                    self.logger.verbose(f"⚠️ Failed to create serial input instance: {e}")
             elif module_name == "serial_input_trigger":
                 # Handle Serial Trigger input module
                 def block_event_callback(data):
-                    self.logger.show_mode(f"🎯 Serial trigger event received: {data}")
+                    self.logger.verbose(f"🎯 Serial trigger event received: {data}")
                     # Update the current value label immediately, thread-safe
                     current_value_label = self.input_config_fields.get('current_value')
                     if current_value_label:
                         value = data.get('value', 'No data')
                         self.frame.after(0, lambda: current_value_label.config(text=f"Value: {value}"))
-                        self.logger.show_mode(f"🎯 Serial trigger: Updated GUI label to '{value}'")
+                        self.logger.verbose(f"🎯 Serial trigger: Updated GUI label to '{value}'")
                     
                     # Send actual triggers to the output module
                     if data.get('trigger', False):
-                        self.logger.show_mode(f"🎯 Serial trigger: Processing trigger event")
+                        self.logger.verbose(f"🎯 Serial trigger: Processing trigger event")
                         # Direct connection to output module for Serial Trigger
                         if self.output_instance:
                             # Update output instance with current config
@@ -994,38 +1019,38 @@ class InteractionBlock:
                                 self.output_instance.start()
                             # Send event to output
                             self.output_instance.handle_event(data)
-                            self.logger.show_mode(f"🎯 Serial trigger: Sent event to output module")
+                            self.logger.verbose(f"🎯 Serial trigger: Sent event to output module")
                         else:
-                            self.logger.show_mode(f"⚠️ Serial Trigger: No output instance to send event to")
+                            self.logger.verbose(f"⚠️ Serial Trigger: No output instance to send event to")
                     else:
-                        self.logger.show_mode(f"🎯 Serial trigger: Non-trigger event (GUI update only)")
+                        self.logger.verbose(f"🎯 Serial trigger: Non-trigger event (GUI update only)")
                 
                 try:
                     self.input_instance = self.loader.create_module_instance(
                         module_name,
                         config,
-                        log_callback=self.logger.show_mode
+                        log_callback=self.logger.verbose
                     )
                     # Add the event callback directly to the Serial Trigger module
                     self.input_instance.add_event_callback(block_event_callback)
-                    self.logger.show_mode(f"🔗 Serial Trigger: Added event callback to module")
+                    self.logger.verbose(f"🔗 Serial Trigger: Added event callback to module")
                     
                     self.input_instance.start()
-                    self.logger.show_mode(f"🚀 Serial Trigger: Module started")
+                    self.logger.verbose(f"🚀 Serial Trigger: Module started")
                     # Start the display update immediately
                     self.start_serial_trigger_display_update()
                 except Exception as e:
-                    self.logger.show_mode(f"⚠️ Failed to create serial trigger input instance: {e}")
+                    self.logger.verbose(f"⚠️ Failed to create serial trigger input instance: {e}")
             else:
                 try:
                     self.input_instance = self.loader.create_module_instance(
                         module_name,
                         config,
-                        log_callback=self.logger.show_mode
+                        log_callback=self.logger.verbose
                     )
                     self.connect_modules()
                 except Exception as e:
-                    self.logger.show_mode(f"⚠️ Failed to create input instance: {e}")
+                    self.logger.verbose(f"⚠️ Failed to create input instance: {e}")
 
     def update_input_instance_with_new_port(self, port):
         config = self.get_input_config()
@@ -1041,7 +1066,7 @@ class InteractionBlock:
         try:
             port = int(port_val)
         except Exception:
-            self.logger.output_trigger(f"⚠️ Invalid port: {port_val}")
+            self.logger.verbose(f"⚠️ Invalid port: {port_val}")
             return
         config["address"] = address
         self._update_input_instance(port, address)
@@ -1056,7 +1081,7 @@ class InteractionBlock:
                 config = self.get_input_config()
                 config["target_time"] = target_time
                 self.input_instance.update_config(config)
-                self.logger.show_mode(f"⚙️ Clock module config updated: target_time = {target_time}")
+                self.logger.verbose(f"⚙️ Clock module config updated: target_time = {target_time}")
             # Trigger config save
             if self.on_change_callback:
                 self.on_change_callback()
@@ -1069,7 +1094,7 @@ class InteractionBlock:
                 config = self.get_input_config()
                 config["port"] = port
                 self.input_instance.update_config(config)
-                self.logger.show_mode(f"⚙️ Serial module config updated: port = {port}")
+                self.logger.verbose(f"⚙️ Serial module config updated: port = {port}")
             # Trigger config save
             if self.on_change_callback:
                 self.on_change_callback()
@@ -1082,7 +1107,7 @@ class InteractionBlock:
                 config = self.get_input_config()
                 config["baud_rate"] = baud_rate
                 self.input_instance.update_config(config)
-                self.logger.show_mode(f"⚙️ Serial module config updated: baud_rate = {baud_rate}")
+                self.logger.verbose(f"⚙️ Serial module config updated: baud_rate = {baud_rate}")
             # Trigger config save
             if self.on_change_callback:
                 self.on_change_callback()
@@ -1095,7 +1120,7 @@ class InteractionBlock:
                 config = self.get_input_config()
                 config["logic_operator"] = logic_operator
                 self.input_instance.update_config(config)
-                self.logger.show_mode(f"⚙️ Serial Trigger module config updated: logic_operator = {logic_operator}")
+                self.logger.verbose(f"⚙️ Serial Trigger module config updated: logic_operator = {logic_operator}")
             # Trigger config save
             if self.on_change_callback:
                 self.on_change_callback()
@@ -1108,7 +1133,7 @@ class InteractionBlock:
                 config = self.get_input_config()
                 config["threshold_value"] = threshold_value
                 self.input_instance.update_config(config)
-                self.logger.show_mode(f"⚙️ Serial Trigger module config updated: threshold_value = {threshold_value}")
+                self.logger.verbose(f"⚙️ Serial Trigger module config updated: threshold_value = {threshold_value}")
             # Trigger config save
             if self.on_change_callback:
                 self.on_change_callback()
@@ -1121,7 +1146,7 @@ class InteractionBlock:
                 config = self.get_output_config()
                 config["ip_address"] = ip_address
                 self.output_instance.update_config(config)
-                self.logger.show_mode(f"⚙️ OSC output module config updated: ip_address = {ip_address}")
+                self.logger.verbose(f"⚙️ OSC output module config updated: ip_address = {ip_address}")
             # Trigger config save
             if self.on_change_callback:
                 self.on_change_callback()
@@ -1134,7 +1159,7 @@ class InteractionBlock:
                 config = self.get_output_config()
                 config["port"] = port
                 self.output_instance.update_config(config)
-                self.logger.show_mode(f"⚙️ OSC output module config updated: port = {port}")
+                self.logger.verbose(f"⚙️ OSC output module config updated: port = {port}")
             # Trigger config save
             if self.on_change_callback:
                 self.on_change_callback()
@@ -1147,7 +1172,7 @@ class InteractionBlock:
                 config = self.get_output_config()
                 config["osc_address"] = osc_address
                 self.output_instance.update_config(config)
-                self.logger.show_mode(f"⚙️ OSC output module config updated: osc_address = {osc_address}")
+                self.logger.verbose(f"⚙️ OSC output module config updated: osc_address = {osc_address}")
             # Trigger config save
             if self.on_change_callback:
                 self.on_change_callback()
@@ -1173,14 +1198,14 @@ class InteractionBlock:
                     shared = self.loader.create_module_instance(
                         module_name,
                         {**self.get_input_config(), "port": port, "address": address},
-                        log_callback=self.logger.show_mode
+                        log_callback=self.logger.verbose
                     )
                     shared.start()
                     InteractionGUI.osc_input_registry[(port, address)] = shared
                     InteractionGUI.osc_input_refcounts[(port, address)] = 0
                     self.logger.verbose(f"🔗 Created new shared OSCInputModule for {(port, address)}")
                 except Exception as e:
-                    self.logger.show_mode(f"⚠️ Failed to create shared OSC input instance: {e}")
+                    self.logger.verbose(f"⚠️ Failed to create shared OSC input instance: {e}")
                     return
             self.input_instance = shared
             InteractionGUI.osc_input_refcounts[(port, address)] += 1
@@ -1192,11 +1217,11 @@ class InteractionBlock:
                 self.input_instance = self.loader.create_module_instance(
                     module_name,
                     self.get_input_config(),
-                    log_callback=self.logger.show_mode
+                    log_callback=self.logger.verbose
                 )
                 self.connect_modules()
             except Exception as e:
-                self.logger.show_mode(f"⚠️ Failed to create input instance: {e}")
+                self.logger.verbose(f"⚠️ Failed to create input instance: {e}")
 
     def draw_output_fields(self, event=None):
         for widget in self.output_fields_container.winfo_children():
@@ -1312,7 +1337,7 @@ class InteractionBlock:
             self.output_instance = self.loader.create_module_instance(
                 module_name,
                 self.get_output_config(),
-                log_callback=self.logger.output_trigger
+                log_callback=self.logger.verbose
             )
             # Set log level for the new module
             if hasattr(self.output_instance, 'log_level'):
@@ -1325,47 +1350,47 @@ class InteractionBlock:
             # Special handling for Clock modules - re-register event callback
             if self.input_var.get() == "clock_input_trigger" and self.input_instance:
                 def block_event_callback(data):
-                    self.logger.show_mode(f"🔔 Clock event received: {data}")
+                    self.logger.verbose(f"🔔 Clock event received: {data}")
                     # Direct connection to output module for Clock
                     if self.logger.level == "verbose":
-                        self.logger.show_mode(f"🔍 Clock: Checking output_instance - {self.output_instance}")
+                        self.logger.verbose(f"🔍 Clock: Checking output_instance - {self.output_instance}")
                     if self.output_instance:
                         if self.logger.level == "verbose":
-                            self.logger.show_mode(f"🔍 Clock: Output instance type: {type(self.output_instance)}")
+                            self.logger.verbose(f"🔍 Clock: Output instance type: {type(self.output_instance)}")
                         # Update output instance with current config
                         if hasattr(self.output_instance, "update_config"):
                             if self.logger.level == "verbose":
-                                self.logger.show_mode(f"🔍 Clock: Updating output config")
+                                self.logger.verbose(f"🔍 Clock: Updating output config")
                             self.output_instance.update_config(self.get_output_config())
                         # Ensure cursor callback is set
                         if hasattr(self.output_instance, "set_cursor_callback"):
                             if self.logger.level == "verbose":
-                                self.logger.show_mode(f"🔍 Clock: Setting cursor callback")
+                                self.logger.verbose(f"🔍 Clock: Setting cursor callback")
                             self.output_instance.set_cursor_callback(self.start_audio_playback)
                         # Ensure output instance is started
                         if hasattr(self.output_instance, "start"):
                             if self.logger.level == "verbose":
-                                self.logger.show_mode(f"🔍 Clock: Starting output instance")
+                                self.logger.verbose(f"🔍 Clock: Starting output instance")
                             self.output_instance.start()
                         # Send event to output
                         if self.logger.level == "verbose":
-                            self.logger.show_mode(f"📤 Clock: Calling output_instance.handle_event(data)")
+                            self.logger.verbose(f"📤 Clock: Calling output_instance.handle_event(data)")
                         self.output_instance.handle_event(data)
                         if self.logger.level == "verbose":
-                            self.logger.show_mode(f"✅ Clock: handle_event call completed")
+                            self.logger.verbose(f"✅ Clock: handle_event call completed")
                     else:
                         if self.logger.level == "verbose":
-                            self.logger.show_mode(f"⚠️ Clock: No output instance to send event to")
+                            self.logger.verbose(f"⚠️ Clock: No output instance to send event to")
                 
                 # Clear existing callbacks and add the new one
                 self.input_instance._event_callbacks.clear()
                 self.input_instance.add_event_callback(block_event_callback)
                 if self.logger.level == "verbose":
-                    self.logger.show_mode(f"🔗 Clock: Re-registered event callback after output change")
+                    self.logger.verbose(f"🔗 Clock: Re-registered event callback after output change")
                             # Special handling for Serial modules - re-register event callback
                 elif self.input_var.get() == "serial_input_streaming" and self.input_instance:
                     def block_event_callback(data):
-                        self.logger.show_mode(f"📡 Serial event received: {data}")
+                        self.logger.verbose(f"📡 Serial event received: {data}")
                         # Update the incoming data label immediately
                         incoming_data_label = self.input_config_fields.get('incoming_data')
                         if incoming_data_label:
@@ -1385,17 +1410,17 @@ class InteractionBlock:
                             # Send event to output
                             self.output_instance.handle_event(data)
                         else:
-                            self.logger.show_mode(f"⚠️ Serial: No output instance to send event to")
+                            self.logger.verbose(f"⚠️ Serial: No output instance to send event to")
                     
                     # Clear existing callbacks and add the new one
                     self.input_instance._event_callbacks.clear()
                     self.input_instance.add_event_callback(block_event_callback)
                     if self.logger.level == "verbose":
-                        self.logger.show_mode(f"🔗 Serial: Re-registered event callback after output change")
+                        self.logger.verbose(f"🔗 Serial: Re-registered event callback after output change")
                 # Special handling for Serial Trigger modules - re-register event callback
                 elif self.input_var.get() == "serial_input_trigger" and self.input_instance:
                     def block_event_callback(data):
-                        self.logger.show_mode(f"🎯 Serial trigger event received: {data}")
+                        self.logger.verbose(f"🎯 Serial trigger event received: {data}")
                         # Update the current value label immediately, thread-safe
                         current_value_label = self.input_config_fields.get('current_value')
                         if current_value_label:
@@ -1415,13 +1440,13 @@ class InteractionBlock:
                             # Send event to output
                             self.output_instance.handle_event(data)
                         else:
-                            self.logger.show_mode(f"⚠️ Serial Trigger: No output instance to send event to")
+                            self.logger.verbose(f"⚠️ Serial Trigger: No output instance to send event to")
                     
                     # Clear existing callbacks and add the new one
                     self.input_instance._event_callbacks.clear()
                     self.input_instance.add_event_callback(block_event_callback)
                     if self.logger.level == "verbose":
-                        self.logger.show_mode(f"🔗 Serial Trigger: Re-registered event callback after output change")
+                        self.logger.verbose(f"🔗 Serial Trigger: Re-registered event callback after output change")
             else:
                 # For other modules, use the standard connect_modules
                 self.connect_modules()
@@ -1433,7 +1458,7 @@ class InteractionBlock:
             self.logger.verbose("✅ Refreshing waveform on startup...")
             self.refresh_output_module_and_waveform()
         except Exception as e:
-            self.logger.show_mode(f"⚠️ Failed to create output instance: {e}")
+            self.logger.verbose(f"⚠️ Failed to create output instance: {e}")
 
     def refresh_output_module_and_waveform(self):
         """Restore waveform rendering and keep cursor animation."""
@@ -1477,9 +1502,9 @@ class InteractionBlock:
                     else:
                         self.logger.verbose(f"⚠️ No waveform widget found in output config fields")
                 except ImportError as e:
-                    self.logger.show_mode(f"⚠️ PIL not available: {e}")
+                    self.logger.verbose(f"⚠️ PIL not available: {e}")
                 except Exception as e:
-                    self.logger.show_mode(f"⚠️ Failed to load waveform image: {e}")
+                    self.logger.verbose(f"⚠️ Failed to load waveform image: {e}")
             else:
                 # Set label using the persistent instance if available
                 waveform_widget = self.output_config_fields.get("waveform")
@@ -1489,14 +1514,14 @@ class InteractionBlock:
                 if img_path:
                     self.logger.verbose(f"💡 File exists: {os.path.exists(img_path)}")
         except Exception as e:
-            self.logger.show_mode(f"⚠️ Failed to refresh waveform: {e}")
+            self.logger.verbose(f"⚠️ Failed to refresh waveform: {e}")
 
     def browse_file(self, entry_widget):
         file_path = filedialog.askopenfilename(filetypes=[("Audio Files", "*.wav *.mp3 *.ogg")])
         if file_path:
             entry_widget.delete(0, tk.END)
             entry_widget.insert(0, file_path)
-            self.logger.show_mode(f"✅ File selected, refreshing waveform...")
+            self.logger.verbose(f"✅ File selected, refreshing waveform...")
             # Update output_instance config before refreshing waveform
             if self.output_instance and hasattr(self.output_instance, "update_config"):
                 self.output_instance.update_config(self.get_output_config())
@@ -1521,11 +1546,11 @@ class InteractionBlock:
     def trigger_output(self):
         output_module = self.output_var.get()
         if not output_module:
-            self.logger.show_mode("⚠️ No output module selected")
+            self.logger.verbose("⚠️ No output module selected")
             return
 
         try:
-            instance = self.loader.create_module_instance(output_module, self.get_output_config(), log_callback=self.logger.output_trigger)
+            instance = self.loader.create_module_instance(output_module, self.get_output_config(), log_callback=self.logger.verbose)
             
             # Set log level for the new instance
             if hasattr(instance, 'log_level'):
@@ -1539,10 +1564,10 @@ class InteractionBlock:
             instance.start()
             instance.handle_event({})
         except Exception as e:
-            self.logger.show_mode(f"💥 Failed to trigger output: {e}")
+            self.logger.verbose(f"💥 Failed to trigger output: {e}")
 
     def handle_button_action(self, name):
-        self.logger.output_trigger(f"🔘 Button action triggered: {name}")
+        self.logger.verbose(f"🔘 Button action triggered: {name}")
         
         # Update input instance config before handling button action
         if self.input_instance and hasattr(self.input_instance, "update_config"):
@@ -1588,15 +1613,15 @@ class InteractionBlock:
                         field.insert(0, v)
                     elif isinstance(field, tk.StringVar):
                         field.set(v)
-                    self.logger.show_mode(f"🔧 Loaded {k} = {v} for {input_module}")
+                    self.logger.verbose(f"🔧 Loaded {k} = {v} for {input_module}")
             
             # Now create instance with the populated config values
             config = self.get_input_config()
-            self.logger.show_mode(f"🔧 Creating {input_module} instance with config: {config}")
+            self.logger.verbose(f"🔧 Creating {input_module} instance with config: {config}")
             self.input_instance = self.loader.create_module_instance(
                 input_module,
                 config,
-                log_callback=self.logger.show_mode
+                log_callback=self.logger.verbose
             )
             if self.input_instance:
                 self.input_instance.start()
@@ -1627,9 +1652,9 @@ class InteractionBlock:
                     self.start_serial_trigger_display_update()
                     # Verify the target time was set correctly
                     if hasattr(self.input_instance, 'target_time'):
-                        self.logger.show_mode(f"🔧 Clock module target_time after creation: {self.input_instance.target_time}")
+                        self.logger.verbose(f"🔧 Clock module target_time after creation: {self.input_instance.target_time}")
         else:
-            self.logger.output_trigger(f"⚠️ Invalid input module: '{input_module}'")
+            self.logger.verbose(f"⚠️ Invalid input module: '{input_module}'")
 
         if self.loader.load_manifest(output_module) is not None:
             self.draw_output_fields()
@@ -1651,12 +1676,12 @@ class InteractionBlock:
                         pass
                     else:
                         # Handle other field types
-                        self.logger.output_trigger(f"⚠️ Unknown field type for {k}: {type(field)}")
+                        self.logger.verbose(f"⚠️ Unknown field type for {k}: {type(field)}")
             
             self.output_instance = self.loader.create_module_instance(
                 output_module,
                 self.get_output_config(),
-                log_callback=self.logger.output_trigger
+                log_callback=self.logger.verbose
             )
             
             # Set up cursor callback for audio output
@@ -1669,7 +1694,7 @@ class InteractionBlock:
             self.logger.verbose("✅ Refreshing waveform on startup...")
             self.refresh_output_module_and_waveform()
         else:
-            self.logger.output_trigger(f"⚠️ Invalid output module: '{output_module}'")
+            self.logger.verbose(f"⚠️ Invalid output module: '{output_module}'")
     
     def get_input_config(self):
         config = {}
@@ -1705,7 +1730,7 @@ class InteractionBlock:
             else:
                 # Handle other field types
                 config[k] = v
-        self.logger.show_mode(f"�� Debug - get_output_config() returning: {config}")
+        self.logger.verbose(f"🔍 Debug - get_output_config() returning: {config}")
         return config
         
     def connect_modules(self):
@@ -1715,7 +1740,7 @@ class InteractionBlock:
             def dynamic_event_callback(data):
                 # Get current config from GUI
                 current_config = self.get_output_config()
-                self.logger.output_trigger(f"🔗 OSC event received, using current config: {current_config}")
+                self.logger.verbose(f"🔗 OSC event received, using current config: {current_config}")
                 
                 # Update output instance with current config
                 if self.output_instance and hasattr(self.output_instance, "update_config"):
@@ -1739,22 +1764,28 @@ class InteractionBlock:
             # Only call set_event_callback if it exists
             if hasattr(self.input_instance, "set_event_callback"):
                 self.input_instance.set_event_callback(dynamic_event_callback)
-                self.logger.show_mode("🔗 Connected input to output with dynamic config")
+                self.logger.verbose("🔗 Connected input to output with dynamic config")
             else:
-                self.logger.show_mode("⚠️ Input module does not support set_event_callback")
+                self.logger.verbose("⚠️ Input module does not support set_event_callback")
 
     def on_slider_change(self, field, value):
         """Called when a slider value changes"""
-        volume = float(value)
+        volume = int(float(value))  # Convert to integer for volume slider
         
         # Update the label
         if field["name"] in self.output_config_fields:
-            self.output_config_fields[field["name"]]["label"].config(text=f"{int(volume)}")
+            self.output_config_fields[field["name"]]["label"].config(text=f"{volume}")
         
         # Update the output instance if it exists
-        if self.output_instance and hasattr(self.output_instance, 'set_volume'):
-            # Set individual volume (0.0 to 1.0)
-            self.output_instance.set_volume(volume / 100.0)
+        if self.output_instance and hasattr(self.output_instance, 'update_config'):
+            # Update the config with the new volume value
+            config = self.get_output_config()
+            config[field["name"]] = volume
+            self.output_instance.update_config(config)
+        
+        # Save config
+        if self.on_change_callback:
+            self.on_change_callback()
 
     def start_audio_playback(self, duration):
         """Start audio playback tracking for cursor"""
@@ -1763,7 +1794,7 @@ class InteractionBlock:
             waveform_data["start_time"] = time.time()
             waveform_data["duration"] = duration
             waveform_data["is_playing"] = True
-            self.logger.output_trigger(f"🎵 Started cursor animation: duration={duration:.2f}s at {time.strftime('%H:%M:%S')}")
+            self.logger.verbose(f"🎵 Started cursor animation: duration={duration:.2f}s at {time.strftime('%H:%M:%S')}")
         else:
             self.logger.verbose(f"⚠️ No waveform field found for cursor animation")
 
@@ -1790,7 +1821,7 @@ class InteractionGUI:
         self.build_gui()
         
         # Initialize logger after GUI is built
-        self.log_level = LogLevel.SHOW_MODE
+        self.log_level = LogLevel.OUTPUTS
         self.logger = Logger(self._write_to_log, self.log_level)
         
         # Load log level from config and set the combobox
@@ -1822,7 +1853,7 @@ class InteractionGUI:
         if int(self.log_text.index('end-1c').split('.')[0]) > 1000:
             self.log_text.delete('1.0', '500.0')
 
-    def log(self, msg, level=LogLevel.SHOW_MODE):
+    def log(self, msg, level=LogLevel.OUTPUTS):
         """Log a message with the specified level"""
         self.logger.log(msg, level)
 
@@ -1913,9 +1944,9 @@ class InteractionGUI:
         log_control_frame.pack(fill="x", pady=(0, 5))
         
         ttk.Label(log_control_frame, text="Log Level:", style="Label.TLabel").pack(side="left", padx=(0, 10))
-        self.log_level_var = tk.StringVar(value="Show Mode")
+        self.log_level_var = tk.StringVar(value="Outputs")
         log_level_combo = ttk.Combobox(log_control_frame, textvariable=self.log_level_var, 
-                                      values=["No Log", "Only Output Triggers", "Show Mode", "Verbose"], 
+                                      values=["No Logging", "OSC", "Serial", "Outputs", "Verbose/Debug"], 
                                       state="readonly", width=20, style="Combo.TCombobox")
         log_level_combo.pack(side="left")
         log_level_combo.bind("<<ComboboxSelected>>", self.on_log_level_change)
@@ -1929,7 +1960,7 @@ class InteractionGUI:
         """Called when installation name is changed"""
         self.app_config["installation_name"] = new_name
         save_app_config(self.app_config)
-        self.log(f"💾 Installation name saved: {new_name}", LogLevel.SHOW_MODE)
+        self.log(f"💾 Installation name saved: {new_name}", LogLevel.VERBOSE)
 
     # on_master_volume_change and all master volume logic removed
 
@@ -1971,7 +2002,7 @@ class InteractionGUI:
                 json.dump(config, f, indent=2)
             self.log("💾 Configuration saved", LogLevel.VERBOSE)
         except Exception as e:
-            self.log(f"💥 Failed to save config: {e}", LogLevel.SHOW_MODE)
+            self.log(f"💥 Failed to save config: {e}", LogLevel.VERBOSE)
 
     def load_config(self):
         try:
@@ -1981,30 +2012,36 @@ class InteractionGUI:
             for interaction in config.get("interactions", []):
                 self.add_block(preset=interaction)
         except FileNotFoundError:
-            self.log("📄 No existing config found, starting fresh", LogLevel.SHOW_MODE)
+            self.log("📄 No existing config found, starting fresh", LogLevel.VERBOSE)
         except Exception as e:
-            self.log(f"💥 Failed to load config: {e}", LogLevel.SHOW_MODE)
+            self.log(f"💥 Failed to load config: {e}", LogLevel.VERBOSE)
 
     def on_log_level_change(self, event=None):
         """Called when the log level dropdown changes"""
         selected_level = self.log_level_var.get()
+        
+        # Clear console when log level changes
+        self.clean_console()
+        
         self._apply_log_level(selected_level)
         
         # Save to app config
         self.app_config["log_level"] = selected_level
         save_app_config(self.app_config)
         
-        self.log(f"🔧 Log level set to: {selected_level}", LogLevel.SHOW_MODE)
+        self.log(f"🔧 Log level set to: {selected_level}", LogLevel.VERBOSE)
 
     def _apply_log_level(self, level_str):
         """Applies the selected log level to the logger and OSC manager"""
-        if level_str == "No Log":
+        if level_str == "No Logging":
             self.logger.set_level(LogLevel.NO_LOG)
-        elif level_str == "Only Output Triggers":
-            self.logger.set_level(LogLevel.OUTPUT_TRIGGERS_ONLY)
-        elif level_str == "Show Mode":
-            self.logger.set_level(LogLevel.SHOW_MODE)
-        elif level_str == "Verbose":
+        elif level_str == "OSC":
+            self.logger.set_level(LogLevel.OSC)
+        elif level_str == "Serial":
+            self.logger.set_level(LogLevel.SERIAL)
+        elif level_str == "Outputs":
+            self.logger.set_level(LogLevel.OUTPUTS)
+        elif level_str == "Verbose/Debug":
             self.logger.set_level(LogLevel.VERBOSE)
         
         # Update OSC manager to use our logger
@@ -2032,7 +2069,7 @@ class InteractionGUI:
 
     def cleanup(self):
         """Clean up resources before shutdown"""
-        self.log("🛑 Shutting down OSC servers...", LogLevel.SHOW_MODE)
+        self.log("🛑 Shutting down OSC servers...", LogLevel.VERBOSE)
         osc_manager.shutdown_all()
         
         # Stop all blocks
@@ -2044,7 +2081,7 @@ class InteractionGUI:
                 if hasattr(block.output_instance, 'stop'):
                     block.output_instance.stop()
         
-        self.log("✅ Cleanup completed", LogLevel.SHOW_MODE)
+        self.log("✅ Cleanup completed", LogLevel.VERBOSE)
 
 def launch_gui():
     root = tk.Tk()

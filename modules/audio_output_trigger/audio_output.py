@@ -190,9 +190,9 @@ class AudioOutputModule(ModuleBase):
                 if getattr(self, 'log_level', 'info') == 'verbose':
                     self.log_message(f"🎵 Audio duration: {self.audio_duration} seconds")
                 
-                # Log the playback
+                # Outputs log: Audio Clip played
                 filename = os.path.basename(self.file_path)
-                self.log_message(f"🎵 Playing {filename}")
+                self.log_message(f"Audio Clip: {filename} played")
                 
                 # Start cursor animation if GUI callback is available
                 if self._cursor_callback:
