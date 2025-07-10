@@ -1,0 +1,27 @@
+{
+  "name": "Clock Input",
+  "type": "input",
+  "classification": "trigger",
+  "mode": "trigger",
+  "description": "Fires an event when the real local time matches the user-input target time (HH:MM:SS). Displays current time.",
+  "fields": [
+    {
+      "name": "target_time",
+      "type": "text",
+      "label": "Target Time (HH:MM:SS)",
+      "default": "12:00:00"
+    },
+    {
+      "name": "current_time",
+      "type": "label",
+      "label": "Current Time",
+      "default": "--:--:--"
+    },
+    {
+      "name": "countdown",
+      "type": "label",
+      "label": "Time Until Target",
+      "default": "--:--:--"
+    }
+  ]
+} 

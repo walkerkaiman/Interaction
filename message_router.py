@@ -89,6 +89,23 @@ class MessageRouter:
             router.connect_modules(osc_input, audio_output)
             # Now when osc_input emits an event, audio_output.handle_event() is called
         """
+        # Validate module classifications are compatible
+        if not self._validate_classification_compatibility(input_module, output_module):
+            print(f"❌ Cannot connect modules with incompatible classifications: "
+                  f"{input_module.manifest.get('name', 'Unknown Input')} "
+                  f"({input_module.manifest.get('classification', 'unknown')}) -> "
+                  f"{output_module.manifest.get('name', 'Unknown Output')} "
+                  f"({output_module.manifest.get('classification', 'unknown')})")
+            return False
+        # Validate mode compatibility
+        input_mode = input_module.manifest.get('mode')
+        output_mode = output_module.manifest.get('mode')
+        if input_mode and output_mode and input_mode != output_mode:
+            print(f"❌ Cannot connect modules with incompatible modes: "
+                  f"{input_module.manifest.get('name', 'Unknown Input')} [mode={input_mode}] -> "
+                  f"{output_module.manifest.get('name', 'Unknown Output')} [mode={output_mode}]")
+            return False
+        
         with self.lock:
             # Get unique identifiers for the modules
             input_id = id(input_module)
@@ -108,6 +125,33 @@ class MessageRouter:
                 
                 print(f"✅ Connected {input_module.manifest.get('name', 'Unknown Input')} "
                       f"to {output_module.manifest.get('name', 'Unknown Output')}")
+        
+        return True
+    
+    def _validate_classification_compatibility(self, input_module, output_module):
+        """
+        Validate that input and output modules have compatible classifications.
+        
+        Args:
+            input_module: The input module to validate
+            output_module: The output module to validate
+            
+        Returns:
+            bool: True if classifications are compatible, False otherwise
+            
+        Note: This method enforces that trigger modules can only connect to
+        trigger modules, and streaming modules can only connect to streaming modules.
+        Modules without classification are allowed to connect to any module.
+        """
+        input_classification = input_module.manifest.get('classification')
+        output_classification = output_module.manifest.get('classification')
+        
+        # If either module doesn't have a classification, allow the connection
+        if not input_classification or not output_classification:
+            return True
+        
+        # Both modules must have the same classification
+        return input_classification == output_classification
     
     def disconnect_modules(self, input_module, output_module):
         """

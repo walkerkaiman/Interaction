@@ -2,6 +2,6 @@
   "installation_name": "Tester",
   "theme": "dark",
   "version": "1.0.0",
-  "master_volume": 37.3,
-  "log_level": "Only Output Triggers"
+  "master_volume": 78.0,
+  "log_level": "Verbose"
 }

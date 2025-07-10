@@ -1,8 +1,16 @@
 {
   "name": "OSC Input",
   "type": "input",
+  "classification": "trigger",
+  "mode": "trigger",
   "description": "Receives OSC messages and emits events",
   "fields": [
+    {
+      "name": "ip_address",
+      "type": "label",
+      "label": "IP Address",
+      "default": "0.0.0.0"
+    },
     {
       "name": "port",
       "type": "text",
@@ -14,6 +22,11 @@
       "type": "text",
       "label": "OSC Address",
       "default": "/trigger"
+    },
+    {
+      "name": "reset",
+      "type": "button",
+      "label": "Reset"
     }
   ]
 }

@@ -28,7 +28,9 @@ from pythonosc import dispatcher, osc_server
 from modules.module_base import ModuleBase
 
 # Import the shared OSC server manager
-from modules.osc_input.osc_server_manager import OSCServerManager
+from modules.osc_input_trigger.osc_server_manager import OSCServerManager
+# Import the shared input event router
+from module_loader import input_event_router
 
 class OSCInputModule(ModuleBase):
     """
@@ -88,7 +90,7 @@ class OSCInputModule(ModuleBase):
         self.server_thread = None
         self.is_running = False
         
-        self._event_callback = None  # Add this line to store the callback
+        # No internal callback list needed
         
         # Log initialization
         self.log_message(f"OSC Input initialized - Port: {self.port}, Address: {self.address}")
@@ -123,23 +125,20 @@ class OSCInputModule(ModuleBase):
     def stop(self):
         """
         Stop the OSC server and clean up resources.
-        
         This method unregisters from the shared OSC server manager and
         stops listening for OSC messages. It ensures proper cleanup of
         network resources and threads.
-        
         Note: The shared server manager will automatically stop the server
         if no other modules are listening on the same port.
         """
         super().stop()
-        
         try:
             # Unregister from the shared server manager
             self.server_manager.unregister_callback(self.port, self.address, self._handle_osc_message)
-            
             self.is_running = False
             self.log_message(f"🛑 OSC server stopped on port {self.port}")
-            
+            # Clean up any additional resources here (threads, files, etc.)
+            # (If you add threads or open files in the future, stop/close them here.)
         except Exception as e:
             self.log_message(f"❌ Error stopping OSC server: {e}")
     
@@ -179,10 +178,17 @@ class OSCInputModule(ModuleBase):
     
     def set_event_callback(self, callback):
         """
-        Set a callback to be called when an OSC event is received.
+        Register a callback to be called when an OSC event is received.
         """
-        self._event_callback = callback
-    
+        # Register with the global input event router
+        input_event_router.register("osc_input", {"port": self.port, "address": self.address}, callback)
+
+    def remove_event_callback(self, callback):
+        """
+        Remove a previously registered event callback.
+        """
+        input_event_router.unregister("osc_input", {"port": self.port, "address": self.address}, callback)
+
     def _handle_osc_message(self, address: str, *args):
         """
         Handle incoming OSC messages and convert them to events.
@@ -205,28 +211,18 @@ class OSCInputModule(ModuleBase):
             /volume 0.5 "main"     -> {"trigger": 0.5, "args": [0.5, "main"]}
         """
         try:
+            # Log every received OSC message
+            self.log_message(f"📡 OSC message received: {address} {args}")
             # Create event data from OSC message
-            event_data = {
+            event = {
                 "address": address,
                 "args": list(args),
+                "trigger": args[0] if args else None,
                 "timestamp": time.time()
             }
             
-            # Add trigger value (first argument) for compatibility
-            if args:
-                event_data["trigger"] = args[0]
-            else:
-                event_data["trigger"] = 1.0  # Default trigger value
-            
-            # Log the received message
-            self.log_message(f"📨 OSC message received: {address} {args}")
-            
-            # Call the event callback if set
-            if self._event_callback:
-                self._event_callback(event_data)
-            
-            # Emit the event to connected output modules
-            self.emit_event(event_data)
+            # Dispatch to the global input event router
+            input_event_router.dispatch_event("osc_input", {"port": self.port, "address": self.address}, event)
             
         except Exception as e:
             self.log_message(f"❌ Error handling OSC message: {e}")
@@ -260,7 +256,8 @@ class OSCInputModule(ModuleBase):
         """
         if self.is_running:
             self.log_message("🧪 Sending test OSC trigger")
-            self._handle_osc_message(self.address, 0.75)
+            # Dispatch a test event to the global router
+            input_event_router.dispatch_event("osc_input", {"port": self.port, "address": self.address}, {"address": self.address, "args": [0.75], "trigger": 0.75, "timestamp": time.time()})
         else:
             self.log_message("❌ Cannot test trigger - server not running")
     
@@ -293,3 +290,35 @@ class OSCInputModule(ModuleBase):
             "type": "osc_input",
             "config": self.get_output_config()
         }
+
+    def get_field_label(self, field_name):
+        """Return the display label for a given field."""
+        if hasattr(self, 'manifest') and 'fields' in self.manifest:
+            for field in self.manifest['fields']:
+                if field['name'] == field_name:
+                    return field.get('label', field_name)
+        return field_name
+
+    def get_field_type(self, field_name):
+        """Return the type for a given field (e.g., 'slider', 'text')."""
+        if hasattr(self, 'manifest') and 'fields' in self.manifest:
+            for field in self.manifest['fields']:
+                if field['name'] == field_name:
+                    return field.get('type', 'text')
+        return 'text'
+
+    def get_field_default(self, field_name):
+        """Return the default value for a given field."""
+        if hasattr(self, 'manifest') and 'fields' in self.manifest:
+            for field in self.manifest['fields']:
+                if field['name'] == field_name:
+                    return field.get('default', '')
+        return ''
+
+    def get_field_options(self, field_name):
+        """Return options for a given field (for dropdowns, etc.), or None."""
+        if hasattr(self, 'manifest') and 'fields' in self.manifest:
+            for field in self.manifest['fields']:
+                if field['name'] == field_name:
+                    return field.get('options')
+        return None

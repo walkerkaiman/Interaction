@@ -86,6 +86,7 @@ class AudioOutputModule(ModuleBase):
         # Extract configuration values with defaults
         self.file_path = config.get("file_path", "")
         self.volume = config.get("volume", 100)
+        # master_volume removed
         
         # Audio playback state
         self.current_channel = None
@@ -124,20 +125,18 @@ class AudioOutputModule(ModuleBase):
     def stop(self):
         """
         Stop the audio output module and clean up resources.
-        
         This method stops any currently playing audio and cleans up
         pygame mixer resources if this is the last audio module.
-        
         Note: pygame mixer is shared across all audio modules, so it's only
         stopped when all audio modules are stopped.
         """
         super().stop()
-        
         # Stop current playback
         if self.current_channel and self.current_channel.get_busy():
             self.current_channel.stop()
             self.current_channel = None
-        
+        # Clean up any additional resources here (threads, files, etc.)
+        # (If you add threads or open files in the future, stop/close them here.)
         self.log_message("🛑 Audio output stopped")
     
     def handle_event(self, data: Dict[str, Any]):
@@ -154,35 +153,55 @@ class AudioOutputModule(ModuleBase):
         Note: The module supports concurrent playback, so multiple events
         can trigger multiple audio instances playing simultaneously.
         """
+        if getattr(self, 'log_level', 'info') == 'verbose':
+            self.log_message(f"🎵 Audio output received event: {data}")
+        if getattr(self, 'log_level', 'info') == 'verbose':
+            self.log_message(f"🎵 Current file_path: {self.file_path}")
+        if getattr(self, 'log_level', 'info') == 'verbose':
+            self.log_message(f"🎵 Current volume: {self.volume}")
+        
         if not self.file_path or not os.path.exists(self.file_path):
             self.log_message("❌ No audio file configured or file not found")
             return
         
         try:
             # Load the audio file
+            if getattr(self, 'log_level', 'info') == 'verbose':
+                self.log_message(f"🎵 Loading audio file: {self.file_path}")
             sound = pygame.mixer.Sound(self.file_path)
             
             # Calculate final volume (individual * master)
-            final_volume = (self.volume / 100.0) * (getattr(self, 'master_volume', 100) / 100.0)
+            final_volume = self.volume / 100.0
+            self.log_message(f"🎵 Setting volume: {final_volume} (individual: {self.volume})")
+            self.log_message(f"🎵 Volume calculation: {self.volume} / 100.0 = {final_volume}")
             sound.set_volume(final_volume)
             
             # Play the audio on an available channel
             channel = pygame.mixer.find_channel()
             if channel:
+                if getattr(self, 'log_level', 'info') == 'verbose':
+                    self.log_message(f"🎵 Playing audio on channel")
                 channel.play(sound)
                 self.current_channel = channel
                 self.playback_start_time = time.time()
                 
                 # Get audio duration for cursor tracking
                 self.audio_duration = sound.get_length()
+                if getattr(self, 'log_level', 'info') == 'verbose':
+                    self.log_message(f"🎵 Audio duration: {self.audio_duration} seconds")
                 
                 # Log the playback
                 filename = os.path.basename(self.file_path)
-                self.log_message(f"Playing {filename}")
+                self.log_message(f"🎵 Playing {filename}")
                 
                 # Start cursor animation if GUI callback is available
                 if self._cursor_callback:
+                    if getattr(self, 'log_level', 'info') == 'verbose':
+                        self.log_message(f"🎵 Starting cursor animation")
                     self._cursor_callback(self.audio_duration)
+                else:
+                    if getattr(self, 'log_level', 'info') == 'verbose':
+                        self.log_message(f"⚠️ No cursor callback available")
             else:
                 self.log_message("❌ No available audio channels")
                 
@@ -227,22 +246,79 @@ class AudioOutputModule(ModuleBase):
         if old_volume != self.volume:
             self.log_message(f"🔊 Volume changed to: {self.volume}%")
     
-    def set_master_volume(self, master_volume: int):
-        """
-        Set the master volume level.
-        
-        This method is called by the GUI to set the global master volume.
-        The master volume is multiplied with the individual volume to get
-        the final playback volume.
-        
-        Args:
-            master_volume (int): Master volume level (0-100)
-            
-        Note: Master volume changes affect all audio modules globally.
-        """
-        self.master_volume = master_volume
-        self.log_message(f"🎚️ Master volume set to: {master_volume}%")
+    # set_master_volume removed
     
+    @staticmethod
+    def generate_waveform_static(file_path, output_path, log_callback=print):
+        """
+        Static method to generate a waveform image from a WAV file.
+        Used for GUI preview/generation without instantiating the module.
+        """
+        import os
+        import numpy as np
+        import wave
+        import pygame
+        try:
+            # Try matplotlib first
+            try:
+                import matplotlib
+                matplotlib.use('Agg')
+                import matplotlib.pyplot as plt
+                from pydub import AudioSegment
+                audio = AudioSegment.from_wav(file_path)
+                samples = np.array(audio.get_array_of_samples())
+                if len(samples) > 10000:
+                    step = len(samples) // 10000
+                    samples = samples[::step]
+                plt.figure(figsize=(8, 2))
+                plt.plot(samples, color='white', linewidth=0.5)
+                plt.axis('off')
+                plt.gca().set_facecolor('black')
+                plt.gcf().set_facecolor('black')
+                plt.savefig(output_path, bbox_inches='tight', pad_inches=0, facecolor='black', edgecolor='none')
+                plt.close()
+                log_callback(f"📊 [static] Generated waveform (matplotlib) for {os.path.basename(file_path)}")
+                return True
+            except Exception as e:
+                log_callback(f"❌ [static] Matplotlib waveform generation failed: {e}")
+            # Fallback to pygame
+            width, height = 800, 200
+            surface = pygame.Surface((width, height))
+            surface.fill((0, 0, 0))
+            try:
+                with wave.open(file_path, 'rb') as wf:
+                    n_channels = wf.getnchannels()
+                    n_frames = wf.getnframes()
+                    sampwidth = wf.getsampwidth()
+                    frames = wf.readframes(n_frames)
+                dtype = {1: np.int8, 2: np.int16, 4: np.int32}.get(sampwidth, np.int16)
+                samples = np.frombuffer(frames, dtype=dtype)
+                if n_channels > 1:
+                    samples = samples[::n_channels]
+                if len(samples) > width:
+                    step = len(samples) // width
+                    samples = samples[::step][:width]
+                else:
+                    samples = np.pad(samples, (0, width - len(samples)), 'constant')
+                samples = samples.astype(np.float32)
+                if np.max(np.abs(samples)) > 0:
+                    samples /= np.max(np.abs(samples))
+                mid = height // 2
+                amp = (height // 2) * 0.9
+                points = [(x, int(mid - s * amp)) for x, s in enumerate(samples)]
+                for x in range(1, len(points)):
+                    pygame.draw.line(surface, (255, 255, 255), points[x-1], points[x], 1)
+                log_callback(f"📊 [static] Generated waveform (pygame) for {os.path.basename(file_path)}")
+            except Exception as e:
+                pygame.draw.line(surface, (255, 0, 0), (0, 0), (width, height), 3)
+                pygame.draw.line(surface, (255, 0, 0), (0, height), (width, 0), 3)
+                log_callback(f"❌ [static] Pygame waveform generation failed: {e}")
+            pygame.image.save(surface, output_path)
+            return True
+        except Exception as e:
+            log_callback(f"❌ [static] Waveform generation outer error: {e}")
+            return False
+
     def generate_waveform(self):
         """
         Generate waveform visualization for the audio file.
@@ -261,7 +337,6 @@ class AudioOutputModule(ModuleBase):
             return
         
         try:
-            # Save waveform images in the module's own waveform directory
             module_dir = os.path.dirname(os.path.abspath(__file__))
             waveform_dir = os.path.join(module_dir, "waveform")
             os.makedirs(waveform_dir, exist_ok=True)
@@ -272,10 +347,7 @@ class AudioOutputModule(ModuleBase):
             
             # Generate waveform if it doesn't exist
             if not os.path.exists(self.waveform_image_path):
-                if MATPLOTLIB_AVAILABLE:
-                    self._generate_waveform_matplotlib()
-                else:
-                    self._generate_waveform_pygame()
+                AudioOutputModule.generate_waveform_static(self.file_path, self.waveform_image_path, log_callback=self.log_message)
                 
                 self.log_message(f"📊 Generated waveform for {filename}")
             else:
@@ -453,4 +525,36 @@ class AudioOutputModule(ModuleBase):
         Set a callback to be called with the audio duration when playback starts (for GUI cursor animation).
         """
         self._cursor_callback = callback
+
+    def get_field_label(self, field_name):
+        """Return the display label for a given field."""
+        if hasattr(self, 'manifest') and 'fields' in self.manifest:
+            for field in self.manifest['fields']:
+                if field['name'] == field_name:
+                    return field.get('label', field_name)
+        return field_name
+
+    def get_field_type(self, field_name):
+        """Return the type for a given field (e.g., 'slider', 'text')."""
+        if hasattr(self, 'manifest') and 'fields' in self.manifest:
+            for field in self.manifest['fields']:
+                if field['name'] == field_name:
+                    return field.get('type', 'text')
+        return 'text'
+
+    def get_field_default(self, field_name):
+        """Return the default value for a given field."""
+        if hasattr(self, 'manifest') and 'fields' in self.manifest:
+            for field in self.manifest['fields']:
+                if field['name'] == field_name:
+                    return field.get('default', '')
+        return ''
+
+    def get_field_options(self, field_name):
+        """Return options for a given field (for dropdowns, etc.), or None."""
+        if hasattr(self, 'manifest') and 'fields' in self.manifest:
+            for field in self.manifest['fields']:
+                if field['name'] == field_name:
+                    return field.get('options')
+        return None
 

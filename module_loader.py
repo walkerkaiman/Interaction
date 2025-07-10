@@ -30,6 +30,53 @@ import importlib.util
 from typing import Dict, List, Any, Optional, Type
 from modules.module_base import ModuleBase
 
+class InputEventRouter:
+    """
+    Shared event router for input modules. Allows multiple blocks to register for the same input config.
+    When an input event is received, all matching blocks are triggered.
+    """
+    def __init__(self):
+        # Map: (input_type, config_key_tuple) -> set of callbacks
+        self.registry = {}
+
+    def _make_key(self, input_type, config):
+        """
+        Create a hashable key for the input config. For OSC: (port, address).
+        Extendable for other input types.
+        """
+        if input_type == "osc_input_trigger":
+            port = int(config.get("port", 8000))
+            address = config.get("address", "/trigger")
+            return (input_type, port, address)
+        # Add more input types here as needed
+        # Fallback: use all config items as a tuple
+        return (input_type, tuple(sorted(config.items())))
+
+    def register(self, input_type, config, callback):
+        key = self._make_key(input_type, config)
+        if key not in self.registry:
+            self.registry[key] = set()
+        self.registry[key].add(callback)
+
+    def unregister(self, input_type, config, callback):
+        key = self._make_key(input_type, config)
+        if key in self.registry and callback in self.registry[key]:
+            self.registry[key].remove(callback)
+            if not self.registry[key]:
+                del self.registry[key]
+
+    def dispatch_event(self, input_type, config, event):
+        key = self._make_key(input_type, config)
+        callbacks = self.registry.get(key, set())
+        for cb in callbacks:
+            try:
+                cb(event)
+            except Exception as e:
+                print(f"❌ Error in input event callback: {e}")
+
+# Create a global instance for use by all modules/frontends
+input_event_router = InputEventRouter()
+
 class ModuleLoader:
     """
     Dynamic module discovery and loading system.
@@ -131,6 +178,38 @@ class ModuleLoader:
             else:
                 print(f"⚠️ Invalid module directory: {item} (missing manifest.json or Python file)")
     
+    def validate_manifest_fields(self, manifest):
+        """
+        Validate that every field in 'fields' has a corresponding entry in 'config_schema' and vice versa.
+        Log a warning if there is a mismatch. If 'fields' is missing, auto-generate from 'config_schema'.
+        """
+        fields = manifest.get('fields')
+        schema = manifest.get('config_schema')
+        if schema and not fields:
+            # Auto-generate fields from config_schema
+            manifest['fields'] = [
+                {
+                    'name': k,
+                    'type': v.get('type', 'text'),
+                    'label': k.capitalize(),
+                    'default': v.get('default', '')
+                } for k, v in schema.items()
+            ]
+            print(f"⚠️ Auto-generated 'fields' from 'config_schema' for manifest: {manifest.get('name', 'unknown')}")
+            return True
+        if not fields or not schema:
+            return False
+        # Check for mismatches
+        field_names = {f['name'] for f in fields}
+        schema_names = set(schema.keys())
+        missing_in_schema = field_names - schema_names
+        missing_in_fields = schema_names - field_names
+        if missing_in_schema:
+            print(f"⚠️ Manifest field(s) missing in config_schema: {missing_in_schema}")
+        if missing_in_fields:
+            print(f"⚠️ config_schema key(s) missing in fields: {missing_in_fields}")
+        return not (missing_in_schema or missing_in_fields)
+    
     def load_manifest(self, module_name: str) -> Optional[Dict[str, Any]]:
         """
         Load and validate a module's manifest file.
@@ -168,6 +247,15 @@ class ModuleLoader:
                 if manifest['type'] not in ['input', 'output']:
                     print(f"❌ Module '{module_name}' has invalid type: {manifest['type']}")
                     return None
+                
+                # Validate classification if present
+                if 'classification' in manifest:
+                    if manifest['classification'] not in ['trigger', 'streaming']:
+                        print(f"❌ Module '{module_name}' has invalid classification: {manifest['classification']}")
+                        return None
+                
+                # Validate/cross-check fields and config_schema
+                self.validate_manifest_fields(manifest)
                 
                 # Cache the manifest
                 module_info['manifest'] = manifest
@@ -342,6 +430,8 @@ class ModuleLoader:
                 modules_info[module_name] = {
                     'name': manifest.get('name', module_name),
                     'type': manifest.get('type', 'unknown'),
+                    'classification': manifest.get('classification', 'unknown'),
+                    'mode': manifest.get('mode', 'unknown'),
                     'description': manifest.get('description', ''),
                     'config_schema': manifest.get('config_schema', {}),
                     'path': self.available_modules[module_name]['path']
@@ -368,6 +458,47 @@ class ModuleLoader:
         for module_name in self.available_modules:
             manifest = self.load_manifest(module_name)
             if manifest and manifest.get('type') == module_type:
+                modules.append(module_name)
+        
+        return modules
+    
+    def get_modules_by_classification(self, classification: str) -> List[str]:
+        """
+        Get a list of available modules of a specific classification.
+        
+        Args:
+            classification (str): Classification of modules to return ('trigger' or 'streaming')
+            
+        Returns:
+            List[str]: List of module names of the specified classification
+        """
+        modules = []
+        
+        for module_name in self.available_modules:
+            manifest = self.load_manifest(module_name)
+            if manifest and manifest.get('classification') == classification:
+                modules.append(module_name)
+        
+        return modules
+    
+    def get_modules_by_type_and_classification(self, module_type: str, classification: str) -> List[str]:
+        """
+        Get a list of available modules of a specific type and classification.
+        
+        Args:
+            module_type (str): Type of modules to return ('input' or 'output')
+            classification (str): Classification of modules to return ('trigger' or 'streaming')
+            
+        Returns:
+            List[str]: List of module names matching both criteria
+        """
+        modules = []
+        
+        for module_name in self.available_modules:
+            manifest = self.load_manifest(module_name)
+            if (manifest and 
+                manifest.get('type') == module_type and 
+                manifest.get('classification') == classification):
                 modules.append(module_name)
         
         return modules

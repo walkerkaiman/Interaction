@@ -2,33 +2,16 @@
   "interactions": [
     {
       "input": {
-        "module": "osc_input",
+        "module": "clock_input_trigger",
         "config": {
-          "port": "9001",
-          "address": "/play"
+          "target_time": "21:37:00"
         }
       },
       "output": {
-        "module": "audio_output",
+        "module": "audio_output_trigger",
         "config": {
-          "file_path": "C:/Users/Kaiman/Desktop/Interaction/tests/Assets/Sweep.wav",
-          "volume": 59.154929577464785
-        }
-      }
-    },
-    {
-      "input": {
-        "module": "osc_input",
-        "config": {
-          "port": "8000",
-          "address": "/play"
-        }
-      },
-      "output": {
-        "module": "audio_output",
-        "config": {
-          "file_path": "C:/Users/Kaiman/Desktop/Interaction/tests/Assets/Toy.wav",
-          "volume": 8.974358974358974
+          "file_path": "C:/Users/Kaiman/Desktop/Interaction/tests/Assets/Arcade.wav",
+          "volume": 75.0
         }
       }
     }
