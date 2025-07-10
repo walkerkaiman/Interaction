@@ -362,6 +362,9 @@ class InteractionBlock:
         # Start updating display for Serial module
         elif self.input_var.get() == "serial_input_streaming":
             self.start_serial_display_update()
+        # Start updating display for Serial Trigger module
+        elif self.input_var.get() == "serial_input_trigger":
+            self.start_serial_trigger_display_update()
 
     def start_clock_display_update(self):
         """Start periodic updates for Clock module display."""
@@ -412,9 +415,43 @@ class InteractionBlock:
             # Schedule next update (every 500ms for more responsive serial data)
             if self.input_var.get() == "serial_input_streaming":
                 self.frame.after(500, update_serial_display)
-        # Start the update cycle immediately
+                # Start the update cycle immediately
         update_serial_display()
-    
+
+    def start_serial_trigger_display_update(self):
+        """Start periodic updates for Serial Trigger module display."""
+        def update_serial_trigger_display():
+            if self.input_var.get() == "serial_input_trigger":
+                # Update connection status label
+                connection_status_label = self.input_config_fields.get('connection_status')
+                if connection_status_label and self.input_instance:
+                    # Get status from the module
+                    display_data = self.input_instance.get_display_data()
+                    status = display_data.get('connection_status', 'Disconnected')
+                    connection_status_label.config(text=f"Connection Status: {status}")
+                
+                # Update current value label
+                current_value_label = self.input_config_fields.get('current_value')
+                if current_value_label and self.input_instance:
+                    # Get value from the module
+                    display_data = self.input_instance.get_display_data()
+                    value = display_data.get('current_value', 'No data')
+                    current_value_label.config(text=f"Current Value: {value}")
+                
+                # Update trigger status label
+                trigger_status_label = self.input_config_fields.get('trigger_status')
+                if trigger_status_label and self.input_instance:
+                    # Get status from the module
+                    display_data = self.input_instance.get_display_data()
+                    status = display_data.get('trigger_status', 'Waiting')
+                    trigger_status_label.config(text=f"Trigger Status: {status}")
+            
+            # Schedule next update (every 500ms for responsive trigger status)
+            if self.input_var.get() == "serial_input_trigger":
+                self.frame.after(500, update_serial_trigger_display)
+        # Start the update cycle immediately
+        update_serial_trigger_display()
+
     def remove_self(self):
         self.cursor_running = False
         # Unregister input event callback if any
@@ -642,11 +679,14 @@ class InteractionBlock:
                 options = field.get("options", [])
                 
                 # Special handling for serial port dropdown
-                if field["name"] == "port" and module_name == "serial_input_streaming":
+                if field["name"] == "port" and (module_name == "serial_input_streaming" or module_name == "serial_input_trigger"):
                     try:
                         # Import and get available ports
-                        from modules.serial_input_streaming.serial_input import SerialInputModule
-                        options = SerialInputModule.get_available_ports()
+                        if module_name == "serial_input_streaming":
+                            from modules.serial_input_streaming.serial_input import SerialInputModule
+                        else:
+                            from modules.serial_input_trigger.serial_trigger import SerialTriggerModule
+                        options = SerialInputModule.get_available_ports() if module_name == "serial_input_streaming" else SerialTriggerModule.get_available_ports()
                         if not options:
                             options = ["No ports available"]
                     except Exception as e:
@@ -672,6 +712,12 @@ class InteractionBlock:
                         if value:
                             self.update_input_instance_with_new_baud_rate(value)
                     combo.bind("<<ComboboxSelected>>", on_baud_change)
+                elif field["name"] == "logic_operator":
+                    def on_logic_operator_change(event=None, self=self, combo_var=combo_var):
+                        value = combo_var.get()
+                        if value:
+                            self.update_input_instance_with_new_logic_operator(value)
+                    combo.bind("<<ComboboxSelected>>", on_logic_operator_change)
                 else:
                     combo.bind("<<ComboboxSelected>>", lambda e: self.on_input_change())
                 
@@ -708,6 +754,14 @@ class InteractionBlock:
                         self.update_input_instance_with_new_target_time(value)
                 entry.bind("<FocusOut>", on_target_time_change)
                 entry.bind("<Return>", on_target_time_change)
+            elif field["name"] == "threshold_value":
+                # Special handling for threshold_value - don't recreate instance on every keystroke
+                def on_threshold_value_change(event=None, self=self, entry=entry):
+                    value = entry.get()
+                    if value:
+                        self.update_input_instance_with_new_threshold_value(value)
+                entry.bind("<FocusOut>", on_threshold_value_change)
+                entry.bind("<Return>", on_threshold_value_change)
             else:
                 entry.bind("<KeyRelease>", lambda e: self.on_input_change())
             self.input_config_fields[field["name"]] = entry
@@ -848,6 +902,42 @@ class InteractionBlock:
                     self.start_serial_display_update()
                 except Exception as e:
                     self.logger.show_mode(f"⚠️ Failed to create serial input instance: {e}")
+            elif module_name == "serial_input_trigger":
+                # Handle Serial Trigger input module
+                def block_event_callback(data):
+                    self.logger.show_mode(f"🎯 Serial trigger event received: {data}")
+                    # Direct connection to output module for Serial Trigger
+                    if self.output_instance:
+                        # Update output instance with current config
+                        if hasattr(self.output_instance, "update_config"):
+                            self.output_instance.update_config(self.get_output_config())
+                        # Ensure cursor callback is set
+                        if hasattr(self.output_instance, "set_cursor_callback"):
+                            self.output_instance.set_cursor_callback(self.start_audio_playback)
+                        # Ensure output instance is started
+                        if hasattr(self.output_instance, "start"):
+                            self.output_instance.start()
+                        # Send event to output
+                        self.output_instance.handle_event(data)
+                    else:
+                        self.logger.show_mode(f"⚠️ Serial Trigger: No output instance to send event to")
+                
+                try:
+                    self.input_instance = self.loader.create_module_instance(
+                        module_name,
+                        config,
+                        log_callback=self.logger.show_mode
+                    )
+                    # Add the event callback directly to the Serial Trigger module
+                    self.input_instance.add_event_callback(block_event_callback)
+                    self.logger.show_mode(f"🔗 Serial Trigger: Added event callback to module")
+                    
+                    self.input_instance.start()
+                    self.logger.show_mode(f"🚀 Serial Trigger: Module started")
+                    # Start the display update immediately
+                    self.start_serial_trigger_display_update()
+                except Exception as e:
+                    self.logger.show_mode(f"⚠️ Failed to create serial trigger input instance: {e}")
             else:
                 try:
                     self.input_instance = self.loader.create_module_instance(
@@ -915,6 +1005,71 @@ class InteractionBlock:
                 config["baud_rate"] = baud_rate
                 self.input_instance.update_config(config)
                 self.logger.show_mode(f"⚙️ Serial module config updated: baud_rate = {baud_rate}")
+            # Trigger config save
+            if self.on_change_callback:
+                self.on_change_callback()
+
+    def update_input_instance_with_new_logic_operator(self, logic_operator):
+        """Update the Serial Trigger module's logic operator."""
+        if self.input_var.get() == "serial_input_trigger":
+            # Update the module's config directly
+            if self.input_instance and hasattr(self.input_instance, 'update_config'):
+                config = self.get_input_config()
+                config["logic_operator"] = logic_operator
+                self.input_instance.update_config(config)
+                self.logger.show_mode(f"⚙️ Serial Trigger module config updated: logic_operator = {logic_operator}")
+            # Trigger config save
+            if self.on_change_callback:
+                self.on_change_callback()
+
+    def update_input_instance_with_new_threshold_value(self, threshold_value):
+        """Update the Serial Trigger module's threshold value."""
+        if self.input_var.get() == "serial_input_trigger":
+            # Update the module's config directly
+            if self.input_instance and hasattr(self.input_instance, 'update_config'):
+                config = self.get_input_config()
+                config["threshold_value"] = threshold_value
+                self.input_instance.update_config(config)
+                self.logger.show_mode(f"⚙️ Serial Trigger module config updated: threshold_value = {threshold_value}")
+            # Trigger config save
+            if self.on_change_callback:
+                self.on_change_callback()
+
+    def update_output_instance_with_new_ip(self, ip_address):
+        """Update the OSC output module's IP address."""
+        if self.output_var.get() == "osc_output_streaming":
+            # Update the module's config directly
+            if self.output_instance and hasattr(self.output_instance, 'update_config'):
+                config = self.get_output_config()
+                config["ip_address"] = ip_address
+                self.output_instance.update_config(config)
+                self.logger.show_mode(f"⚙️ OSC output module config updated: ip_address = {ip_address}")
+            # Trigger config save
+            if self.on_change_callback:
+                self.on_change_callback()
+
+    def update_output_instance_with_new_port(self, port):
+        """Update the OSC output module's port."""
+        if self.output_var.get() == "osc_output_streaming":
+            # Update the module's config directly
+            if self.output_instance and hasattr(self.output_instance, 'update_config'):
+                config = self.get_output_config()
+                config["port"] = port
+                self.output_instance.update_config(config)
+                self.logger.show_mode(f"⚙️ OSC output module config updated: port = {port}")
+            # Trigger config save
+            if self.on_change_callback:
+                self.on_change_callback()
+
+    def update_output_instance_with_new_osc_address(self, osc_address):
+        """Update the OSC output module's OSC address."""
+        if self.output_var.get() == "osc_output_streaming":
+            # Update the module's config directly
+            if self.output_instance and hasattr(self.output_instance, 'update_config'):
+                config = self.get_output_config()
+                config["osc_address"] = osc_address
+                self.output_instance.update_config(config)
+                self.logger.show_mode(f"⚙️ OSC output module config updated: osc_address = {osc_address}")
             # Trigger config save
             if self.on_change_callback:
                 self.on_change_callback()
@@ -1045,6 +1200,30 @@ class InteractionBlock:
                 entry.bind("<Double-Button-1>", lambda e, ent=entry: self.browse_file(ent))
                 # Also trigger waveform generation when the file path changes
                 entry.bind("<KeyRelease>", lambda e: self.on_file_path_change())
+            elif field["name"] == "ip_address":
+                def on_ip_change(event=None, self=self, entry=entry):
+                    value = entry.get()
+                    if value:
+                        self.update_output_instance_with_new_ip(value)
+                entry.bind("<FocusOut>", on_ip_change)
+                entry.bind("<Return>", on_ip_change)
+            elif field["name"] == "port":
+                def on_port_change(event=None, self=self, entry=entry):
+                    value = entry.get()
+                    try:
+                        port = int(value)
+                        self.update_output_instance_with_new_port(port)
+                    except ValueError:
+                        pass
+                entry.bind("<FocusOut>", on_port_change)
+                entry.bind("<Return>", on_port_change)
+            elif field["name"] == "osc_address":
+                def on_osc_address_change(event=None, self=self, entry=entry):
+                    value = entry.get()
+                    if value:
+                        self.update_output_instance_with_new_osc_address(value)
+                entry.bind("<FocusOut>", on_osc_address_change)
+                entry.bind("<Return>", on_osc_address_change)
 
         # Stop any existing output instance before creating a new one
         if self.output_instance and hasattr(self.output_instance, "stop"):
@@ -1105,8 +1284,58 @@ class InteractionBlock:
                 self.input_instance.add_event_callback(block_event_callback)
                 if self.logger.level == "verbose":
                     self.logger.show_mode(f"🔗 Clock: Re-registered event callback after output change")
+                            # Special handling for Serial modules - re-register event callback
+                elif self.input_var.get() == "serial_input_streaming" and self.input_instance:
+                    def block_event_callback(data):
+                        self.logger.show_mode(f"📡 Serial event received: {data}")
+                        # Direct connection to output module for Serial
+                        if self.output_instance:
+                            # Update output instance with current config
+                            if hasattr(self.output_instance, "update_config"):
+                                self.output_instance.update_config(self.get_output_config())
+                            # Ensure cursor callback is set
+                            if hasattr(self.output_instance, "set_cursor_callback"):
+                                self.output_instance.set_cursor_callback(self.start_audio_playback)
+                            # Ensure output instance is started
+                            if hasattr(self.output_instance, "start"):
+                                self.output_instance.start()
+                            # Send event to output
+                            self.output_instance.handle_event(data)
+                        else:
+                            self.logger.show_mode(f"⚠️ Serial: No output instance to send event to")
+                    
+                    # Clear existing callbacks and add the new one
+                    self.input_instance._event_callbacks.clear()
+                    self.input_instance.add_event_callback(block_event_callback)
+                    if self.logger.level == "verbose":
+                        self.logger.show_mode(f"🔗 Serial: Re-registered event callback after output change")
+                # Special handling for Serial Trigger modules - re-register event callback
+                elif self.input_var.get() == "serial_input_trigger" and self.input_instance:
+                    def block_event_callback(data):
+                        self.logger.show_mode(f"🎯 Serial trigger event received: {data}")
+                        # Direct connection to output module for Serial Trigger
+                        if self.output_instance:
+                            # Update output instance with current config
+                            if hasattr(self.output_instance, "update_config"):
+                                self.output_instance.update_config(self.get_output_config())
+                            # Ensure cursor callback is set
+                            if hasattr(self.output_instance, "set_cursor_callback"):
+                                self.output_instance.set_cursor_callback(self.start_audio_playback)
+                            # Ensure output instance is started
+                            if hasattr(self.output_instance, "start"):
+                                self.output_instance.start()
+                            # Send event to output
+                            self.output_instance.handle_event(data)
+                        else:
+                            self.logger.show_mode(f"⚠️ Serial Trigger: No output instance to send event to")
+                    
+                    # Clear existing callbacks and add the new one
+                    self.input_instance._event_callbacks.clear()
+                    self.input_instance.add_event_callback(block_event_callback)
+                    if self.logger.level == "verbose":
+                        self.logger.show_mode(f"🔗 Serial Trigger: Re-registered event callback after output change")
             else:
-                # For non-Clock modules, use the standard connect_modules
+                # For other modules, use the standard connect_modules
                 self.connect_modules()
             
             # Set the waveform label using the persistent instance
@@ -1300,6 +1529,14 @@ class InteractionBlock:
                             self.output_instance.handle_event(data)
                     self.input_instance.add_event_callback(block_event_callback)
                     self.start_serial_display_update()
+                elif input_module == "serial_input_trigger":
+                    # Add event callback for Serial Trigger module
+                    def block_event_callback(data):
+                        self.connect_modules()
+                        if self.output_instance:
+                            self.output_instance.handle_event(data)
+                    self.input_instance.add_event_callback(block_event_callback)
+                    self.start_serial_trigger_display_update()
                     # Verify the target time was set correctly
                     if hasattr(self.input_instance, 'target_time'):
                         self.logger.show_mode(f"🔧 Clock module target_time after creation: {self.input_instance.target_time}")

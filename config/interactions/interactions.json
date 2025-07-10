@@ -2,17 +2,19 @@
   "interactions": [
     {
       "input": {
-        "module": "osc_input_trigger",
+        "module": "serial_input_trigger",
         "config": {
-          "port": 8000,
-          "address": "/trigger"
+          "port": "COM3",
+          "baud_rate": "9600",
+          "logic_operator": ">",
+          "threshold_value": "127"
         }
       },
       "output": {
         "module": "audio_output_trigger",
         "config": {
           "file_path": "C:/Users/Kaiman/Desktop/Interaction/tests/Assets/Sweep.wav",
-          "volume": 100.0
+          "volume": 88.33333333333333
         }
       }
     }

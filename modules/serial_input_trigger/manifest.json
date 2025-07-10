@@ -1,0 +1,54 @@
+{
+  "name": "Serial Trigger",
+  "type": "input",
+  "classification": "trigger",
+  "mode": "trigger",
+  "description": "Monitors serial data and triggers when values meet specified logic conditions. Supports crossing detection for < and > operators.",
+  "fields": [
+    {
+      "name": "port",
+      "type": "dropdown",
+      "label": "Serial Port",
+      "default": "",
+      "options": []
+    },
+    {
+      "name": "baud_rate",
+      "type": "dropdown",
+      "label": "Baud Rate",
+      "default": "9600",
+      "options": ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"]
+    },
+    {
+      "name": "logic_operator",
+      "type": "dropdown",
+      "label": "Logic Operator",
+      "default": ">",
+      "options": ["<", ">", "="]
+    },
+    {
+      "name": "threshold_value",
+      "type": "text",
+      "label": "Threshold Value",
+      "default": "0"
+    },
+    {
+      "name": "connection_status",
+      "type": "label",
+      "label": "Connection Status",
+      "default": "Disconnected"
+    },
+    {
+      "name": "current_value",
+      "type": "label",
+      "label": "Current Value",
+      "default": "No data"
+    },
+    {
+      "name": "trigger_status",
+      "type": "label",
+      "label": "Trigger Status",
+      "default": "Waiting"
+    }
+  ]
+} 
