@@ -176,6 +176,19 @@ class OSCInputModule(ModuleBase):
                 time.sleep(0.1)  # Brief delay to ensure cleanup
                 self.start()
     
+    def auto_configure(self):
+        """
+        If no port or address is set, use defaults (port 8000, address /trigger).
+        """
+        if not getattr(self, 'port', None):
+            self.port = 8000
+            self.config['port'] = 8000
+            self.log_message("[Auto-configure] Set default OSC port: 8000")
+        if not getattr(self, 'address', None):
+            self.address = '/trigger'
+            self.config['address'] = '/trigger'
+            self.log_message("[Auto-configure] Set default OSC address: /trigger")
+
     def set_event_callback(self, callback):
         """
         Register a callback to be called when an OSC event is received.

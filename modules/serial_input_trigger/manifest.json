@@ -41,7 +41,7 @@
     {
       "name": "current_value",
       "type": "label",
-      "label": "Current Value",
+      "label": "Value",
       "default": "No data"
     },
     {

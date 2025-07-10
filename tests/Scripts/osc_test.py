@@ -10,7 +10,7 @@ OSC_ADDRESS = "/play"    # Match the OSC address entered in the GUI
 client = SimpleUDPClient(TARGET_IP, TARGET_PORT)
 
 # Send test messages
-print(f"Sending OSC messages to {TARGET_IP}:{TARGET_PORT} at address {OSC_ADDRESS}")
+# print(f"Sending OSC messages to {TARGET_IP}:{TARGET_PORT} at address {OSC_ADDRESS}")
 
 client.send_message(OSC_ADDRESS, f"test {1}")
-print(f"Sent: {OSC_ADDRESS} test {1}")
+# print(f"Sent: {OSC_ADDRESS} test {1}")

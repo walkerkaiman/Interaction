@@ -558,3 +558,20 @@ class AudioOutputModule(ModuleBase):
                     return field.get('options')
         return None
 
+    def auto_configure(self):
+        """
+        If no file_path is set, select the first .wav file in the module directory. Set volume to 100 if not set.
+        """
+        import os
+        if not getattr(self, 'file_path', None):
+            module_dir = os.path.dirname(__file__)
+            wavs = [f for f in os.listdir(module_dir) if f.lower().endswith('.wav')]
+            if wavs:
+                self.file_path = os.path.join(module_dir, wavs[0])
+                self.config['file_path'] = self.file_path
+                self.log_message(f"[Auto-configure] Selected file: {self.file_path}")
+        if not getattr(self, 'volume', None):
+            self.volume = 100
+            self.config['volume'] = 100
+            self.log_message("[Auto-configure] Set default volume: 100")
+

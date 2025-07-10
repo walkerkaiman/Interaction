@@ -4,7 +4,7 @@ import time
 from modules.module_base import ModuleBase
 from pythonosc import udp_client
 
-class OSCOutputModule(ModuleBase):
+class OSCOutputTriggerModule(ModuleBase):
     def __init__(self, config, manifest, log_callback=print):
         super().__init__(config, manifest, log_callback)
         
@@ -24,16 +24,16 @@ class OSCOutputModule(ModuleBase):
         # Initialize OSC client
         self._setup_osc_client()
         
-        self.log_message(f"OSC Output initialized - IP: {self.ip_address}, Port: {self.port}, Address: {self.osc_address}")
+        self.log_message(f"OSC Output Trigger initialized - IP: {self.ip_address}, Port: {self.port}, Address: {self.osc_address}")
 
     def start(self):
-        """Start the OSC output module"""
-        self.log_message("🚀 OSC output module started")
+        """Start the OSC output trigger module"""
+        self.log_message("🚀 OSC output trigger module started")
 
     def stop(self):
-        """Stop the OSC output module"""
+        """Stop the OSC output trigger module"""
         self._disconnect()
-        self.log_message("🛑 OSC output module stopped")
+        self.log_message("🛑 OSC output trigger module stopped")
 
     def update_config(self, config):
         """Update the module configuration"""
@@ -102,71 +102,29 @@ class OSCOutputModule(ModuleBase):
         
         self.connection_status = "Disconnected"
 
-    def _parse_value(self, data):
-        """
-        Parse incoming data and convert to appropriate type.
-        Returns (value, type_name) tuple.
-        """
-        try:
-            # Extract value from event data
-            if isinstance(data, dict):
-                value = data.get('value', str(data))
-            else:
-                value = str(data)
-            
-            # Strip whitespace
-            value = value.strip()
-            
-            if not value:
-                return None, "empty"
-            
-            # Check if it's a float (contains decimal point)
-            if '.' in value:
-                try:
-                    float_val = float(value)
-                    return float_val, "float"
-                except ValueError:
-                    # If float conversion fails, return as string
-                    return value, "string"
-            
-            # Check if it's an integer
-            try:
-                int_val = int(value)
-                return int_val, "integer"
-            except ValueError:
-                # If integer conversion fails, return as string
-                return value, "string"
-                
-        except Exception as e:
-            self.log_message(f"⚠️ Error parsing value '{data}': {e}")
-            return str(data), "string"
-
     def handle_event(self, data):
-        """Handle incoming events and send OSC messages"""
+        """Handle incoming trigger events and send OSC message with value 1"""
         try:
-            # Parse the incoming data
-            value, value_type = self._parse_value(data)
-            
-            if value is None:
-                self.log_message("⚠️ Received empty data, skipping OSC send")
+            # Only respond to trigger events
+            if not data.get('trigger', False):
                 return
             
             # Update last sent data for display
             with self._lock:
-                self.last_sent_data = f"{value} ({value_type})"
+                self.last_sent_data = f"1 (trigger)"
             
-            # Send OSC message
+            # Send OSC message with value 1
             if self.osc_client:
                 try:
-                    self.osc_client.send_message(self.osc_address, value)
-                    self.log_message(f"📤 Sent OSC: {self.osc_address} = {value} ({value_type})")
+                    self.osc_client.send_message(self.osc_address, 1)
+                    self.log_message(f"📤 Sent OSC: {self.osc_address} = 1 (trigger)")
                 except Exception as e:
                     self.log_message(f"❌ Failed to send OSC message: {e}")
                     self.connection_status = f"Send Error: {str(e)}"
                     # Try to reconnect
                     self._setup_osc_client()
             else:
-                self.log_message(f"⚠️ OSC client not available, cannot send: {value}")
+                self.log_message(f"⚠️ OSC client not available, cannot send: 1 (trigger)")
                 
         except Exception as e:
             self.log_message(f"❌ Error handling event: {e}")

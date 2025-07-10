@@ -47,7 +47,7 @@ class ModuleBase:
     """
     
     def __init__(self, config: Dict[str, Any], manifest: Dict[str, Any], 
-                 log_callback: Callable = print):
+                 log_callback: Callable = None):
         """
         Initialize the module with configuration and manifest.
         
@@ -60,6 +60,8 @@ class ModuleBase:
         type (input/output), description, and configuration schema. The config
         contains the actual settings for this specific instance of the module.
         """
+        if log_callback is None:
+            log_callback = lambda msg: None
         self.config = config or {}
         self.manifest = manifest or {}
         self.log_callback = log_callback
@@ -69,6 +71,13 @@ class ModuleBase:
         module_name = self.manifest.get('name', 'Unknown Module')
         self.log_message(f"Initializing {module_name}")
     
+    def auto_configure(self):
+        """
+        Attempt to auto-configure the module if required resources are missing.
+        Subclasses should override this to select a default port, device, etc.
+        """
+        pass
+
     def start(self):
         """
         Start the module's operation.
@@ -84,6 +93,7 @@ class ModuleBase:
         It's the responsibility of the module to handle any errors that occur
         during startup and log them appropriately.
         """
+        self.auto_configure()
         module_name = self.manifest.get('name', 'Unknown Module')
         self.log_message(f"Starting {module_name}")
     

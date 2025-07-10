@@ -4,17 +4,34 @@
       "input": {
         "module": "serial_input_trigger",
         "config": {
-          "port": "COM3",
+          "port": "COM4",
           "baud_rate": "9600",
           "logic_operator": ">",
-          "threshold_value": "127"
+          "threshold_value": "10"
+        }
+      },
+      "output": {
+        "module": "osc_output_trigger",
+        "config": {
+          "ip_address": "127.0.0.1",
+          "port": "9090",
+          "osc_address": "/data"
+        }
+      }
+    },
+    {
+      "input": {
+        "module": "osc_input_trigger",
+        "config": {
+          "port": 9090,
+          "address": "/data"
         }
       },
       "output": {
         "module": "audio_output_trigger",
         "config": {
-          "file_path": "C:/Users/Kaiman/Desktop/Interaction/tests/Assets/Sweep.wav",
-          "volume": 88.33333333333333
+          "file_path": "C:/Users/Kaiman/Desktop/Interaction/tests/Assets/Arcade.wav",
+          "volume": 100.0
         }
       }
     }

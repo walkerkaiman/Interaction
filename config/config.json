@@ -1,7 +1,7 @@
 {
-  "installation_name": "Tester",
+  "installation_name": "Installation A",
   "theme": "dark",
   "version": "1.0.0",
   "master_volume": 78.0,
-  "log_level": "Verbose"
+  "log_level": "No Log"
 }

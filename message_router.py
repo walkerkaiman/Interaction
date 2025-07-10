@@ -259,7 +259,8 @@ class MessageRouter:
                         output_module.handle_event(event_data)
                     except Exception as e:
                         # Log errors but don't crash the routing system
-                        print(f"❌ Error routing event to {output_module.manifest.get('name', 'Unknown Output')}: {e}")
+                        # print(f"❌ Error routing event to {output_module.manifest.get('name', 'Unknown Output')}: {e}")
+                        pass
     
     def clear_all_connections(self):
         """

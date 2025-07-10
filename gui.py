@@ -205,8 +205,12 @@ class InteractionBlock:
             self.draw_input_fields(create_instance=False)
             for k, v in input_data.get("config", {}).items():
                 if k in self.input_config_fields:
-                    self.input_config_fields[k].delete(0, tk.END)
-                    self.input_config_fields[k].insert(0, v)
+                    field = self.input_config_fields[k]
+                    if isinstance(field, tk.Entry):
+                        field.delete(0, tk.END)
+                        field.insert(0, v)
+                    elif isinstance(field, tk.StringVar):
+                        field.set(v)
             # Now create instance with the populated config values
             self.input_instance = self.loader.create_module_instance(
                 input_module,
@@ -214,10 +218,49 @@ class InteractionBlock:
                 log_callback=self.logger.show_mode
             )
             if self.input_instance:
+                # Add event callback for serial_input_trigger
+                if input_module == "serial_input_trigger":
+                    def block_event_callback(data):
+                        self.logger.show_mode(f"🎯 Serial trigger event received: {data}")
+                        # Update the current value label immediately, thread-safe
+                        current_value_label = self.input_config_fields.get('current_value')
+                        if current_value_label:
+                            value = data.get('value', 'No data')
+                            self.frame.after(0, lambda: current_value_label.config(text=f"Value: {value}"))
+                            self.logger.show_mode(f"🎯 Serial trigger: Updated GUI label to '{value}'")
+                        
+                        # Send actual triggers to the output module
+                        if data.get('trigger', False):
+                            self.logger.show_mode(f"🎯 Serial trigger: Processing trigger event")
+                            # Direct connection to output module for Serial Trigger
+                            if self.output_instance:
+                                # Update output instance with current config
+                                if hasattr(self.output_instance, "update_config"):
+                                    self.output_instance.update_config(self.get_output_config())
+                                # Ensure cursor callback is set
+                                if hasattr(self.output_instance, "set_cursor_callback"):
+                                    self.output_instance.set_cursor_callback(self.start_audio_playback)
+                                # Ensure output instance is started
+                                if hasattr(self.output_instance, "start"):
+                                    self.output_instance.start()
+                                # Send event to output
+                                self.output_instance.handle_event(data)
+                                self.logger.show_mode(f"🎯 Serial trigger: Sent event to output module")
+                            else:
+                                self.logger.show_mode(f"⚠️ Serial Trigger: No output instance to send event to")
+                        else:
+                            self.logger.show_mode(f"🎯 Serial trigger: Non-trigger event (GUI update only)")
+                    
+                    self.input_instance.add_event_callback(block_event_callback)
+                    self.logger.show_mode(f"🔗 Serial Trigger: Added event callback to module")
+                
                 self.input_instance.start()
                 # Special handling for Clock module - start display update
                 if input_module == "clock_input_trigger":
                     self.start_clock_display_update()
+                # Special handling for Serial Trigger module - start display update
+                elif input_module == "serial_input_trigger":
+                    self.start_serial_trigger_display_update()
         else:
             self.logger.output_trigger(f"⚠️ Invalid input module: '{input_module}'")
         # Populate output fields
@@ -343,13 +386,19 @@ class InteractionBlock:
                 if output_mode and manifest.get('mode') != output_mode:
                     continue
                 input_modules.append(mod)
-        input_combo = self.frame.winfo_children()[1].winfo_children()[0].winfo_children()[1].winfo_children()[1]
-        input_combo["values"] = input_modules
-        current_input = self.input_var.get()
-        if current_input and current_input not in input_modules:
-            self.input_var.set("")
-            self.input_instance = None
-    
+        # Use the direct reference to input_combo
+        try:
+            if hasattr(self, 'input_combo') and self.input_combo is not None:
+                self.input_combo["values"] = input_modules
+                current_input = self.input_var.get()
+                if current_input and current_input not in input_modules:
+                    self.input_var.set("")
+                    self.input_instance = None
+            else:
+                self.logger.show_mode("⚠️ input_combo reference not found; cannot update input modules.")
+        except Exception as e:
+            self.logger.show_mode(f"⚠️ Error updating input modules: {e}")
+
     def on_input_module_selected(self, event=None):
         """
         Called when an input module is selected. Draw input fields and update output modules.
@@ -436,7 +485,7 @@ class InteractionBlock:
                     # Get value from the module
                     display_data = self.input_instance.get_display_data()
                     value = display_data.get('current_value', 'No data')
-                    current_value_label.config(text=f"Current Value: {value}")
+                    current_value_label.config(text=f"Value: {value}")
                 
                 # Update trigger status label
                 trigger_status_label = self.input_config_fields.get('trigger_status')
@@ -571,6 +620,7 @@ class InteractionBlock:
         input_combo = ttk.Combobox(input_frame, textvariable=self.input_var, state="readonly", style="Combo.TCombobox")
         input_combo.pack(fill="x", padx=10, pady=(0, 10))
         input_combo.bind("<<ComboboxSelected>>", self.on_input_module_selected)
+        self.input_combo = input_combo  # Store direct reference
 
         # Populate input modules (raw names only)
         input_modules = self.loader.get_modules_by_type("input")
@@ -629,7 +679,17 @@ class InteractionBlock:
                 continue
             if field["type"] == "label":
                 # Handle label type fields (display only)
-                if field["name"] == "ip_address":
+                if module_name == "serial_input_trigger":
+                    if field["name"] == "current_value":
+                        # Only add the Current Value label
+                        label = ttk.Label(self.input_fields_container, text=f"{field['label']}: {field.get('default', '')}", style="Label.TLabel")
+                        label.pack(anchor="w", padx=5, pady=(10, 0))
+                        self.input_config_fields[field["name"]] = label
+                        continue
+                    elif field["name"] == "trigger_status":
+                        # Skip adding Trigger Status label
+                        continue
+                elif field["name"] == "ip_address":
                     # Get local IP address
                     try:
                         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -870,6 +930,11 @@ class InteractionBlock:
                 # Handle Serial input module
                 def block_event_callback(data):
                     self.logger.show_mode(f"📡 Serial event received: {data}")
+                    # Update the incoming data label immediately
+                    incoming_data_label = self.input_config_fields.get('incoming_data')
+                    if incoming_data_label:
+                        value = data.get('value', 'No data received')
+                        incoming_data_label.config(text=f"Incoming Data: {value}")
                     # Direct connection to output module for Serial
                     if self.output_instance:
                         # Update output instance with current config
@@ -906,21 +971,34 @@ class InteractionBlock:
                 # Handle Serial Trigger input module
                 def block_event_callback(data):
                     self.logger.show_mode(f"🎯 Serial trigger event received: {data}")
-                    # Direct connection to output module for Serial Trigger
-                    if self.output_instance:
-                        # Update output instance with current config
-                        if hasattr(self.output_instance, "update_config"):
-                            self.output_instance.update_config(self.get_output_config())
-                        # Ensure cursor callback is set
-                        if hasattr(self.output_instance, "set_cursor_callback"):
-                            self.output_instance.set_cursor_callback(self.start_audio_playback)
-                        # Ensure output instance is started
-                        if hasattr(self.output_instance, "start"):
-                            self.output_instance.start()
-                        # Send event to output
-                        self.output_instance.handle_event(data)
+                    # Update the current value label immediately, thread-safe
+                    current_value_label = self.input_config_fields.get('current_value')
+                    if current_value_label:
+                        value = data.get('value', 'No data')
+                        self.frame.after(0, lambda: current_value_label.config(text=f"Value: {value}"))
+                        self.logger.show_mode(f"🎯 Serial trigger: Updated GUI label to '{value}'")
+                    
+                    # Send actual triggers to the output module
+                    if data.get('trigger', False):
+                        self.logger.show_mode(f"🎯 Serial trigger: Processing trigger event")
+                        # Direct connection to output module for Serial Trigger
+                        if self.output_instance:
+                            # Update output instance with current config
+                            if hasattr(self.output_instance, "update_config"):
+                                self.output_instance.update_config(self.get_output_config())
+                            # Ensure cursor callback is set
+                            if hasattr(self.output_instance, "set_cursor_callback"):
+                                self.output_instance.set_cursor_callback(self.start_audio_playback)
+                            # Ensure output instance is started
+                            if hasattr(self.output_instance, "start"):
+                                self.output_instance.start()
+                            # Send event to output
+                            self.output_instance.handle_event(data)
+                            self.logger.show_mode(f"🎯 Serial trigger: Sent event to output module")
+                        else:
+                            self.logger.show_mode(f"⚠️ Serial Trigger: No output instance to send event to")
                     else:
-                        self.logger.show_mode(f"⚠️ Serial Trigger: No output instance to send event to")
+                        self.logger.show_mode(f"🎯 Serial trigger: Non-trigger event (GUI update only)")
                 
                 try:
                     self.input_instance = self.loader.create_module_instance(
@@ -1288,6 +1366,11 @@ class InteractionBlock:
                 elif self.input_var.get() == "serial_input_streaming" and self.input_instance:
                     def block_event_callback(data):
                         self.logger.show_mode(f"📡 Serial event received: {data}")
+                        # Update the incoming data label immediately
+                        incoming_data_label = self.input_config_fields.get('incoming_data')
+                        if incoming_data_label:
+                            value = data.get('value', 'No data received')
+                            incoming_data_label.config(text=f"Incoming Data: {value}")
                         # Direct connection to output module for Serial
                         if self.output_instance:
                             # Update output instance with current config
@@ -1313,6 +1396,11 @@ class InteractionBlock:
                 elif self.input_var.get() == "serial_input_trigger" and self.input_instance:
                     def block_event_callback(data):
                         self.logger.show_mode(f"🎯 Serial trigger event received: {data}")
+                        # Update the current value label immediately, thread-safe
+                        current_value_label = self.input_config_fields.get('current_value')
+                        if current_value_label:
+                            value = data.get('value', 'No data')
+                            self.frame.after(0, lambda: current_value_label.config(text=f"Value: {value}"))
                         # Direct connection to output module for Serial Trigger
                         if self.output_instance:
                             # Update output instance with current config
@@ -1552,6 +1640,9 @@ class InteractionBlock:
                         # Handle Entry widgets (like file_path)
                         field.delete(0, tk.END)
                         field.insert(0, v)
+                    elif isinstance(field, tk.StringVar):
+                        # Handle StringVar widgets (like dropdowns)
+                        field.set(v)
                     elif isinstance(field, dict) and "var" in field:
                         # Handle sliders
                         field["var"].set(v)

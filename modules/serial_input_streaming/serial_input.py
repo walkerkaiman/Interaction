@@ -75,6 +75,17 @@ class SerialInputModule(ModuleBase):
             if self._running:
                 self._reconnect()
 
+    def auto_configure(self):
+        """
+        If no port is set, select the first available port and update config.
+        """
+        if not self.port:
+            ports = self.get_available_ports()
+            if ports:
+                self.port = ports[0]
+                self.config['port'] = self.port
+                self.log_message(f"[Auto-configure] Selected port: {self.port}")
+
     def _connect(self):
         """Establish serial connection"""
         if not self.port:

@@ -39,6 +39,18 @@ class ClockInputModule(ModuleBase):
         # Optionally reset last fired so it can fire again if target changes
         self._last_fired = None
 
+    def auto_configure(self):
+        """
+        If no target_time is set, set it to now + 1 hour.
+        """
+        import datetime
+        if not getattr(self, 'target_time', None):
+            now = datetime.datetime.now()
+            target = now + datetime.timedelta(hours=1)
+            self.target_time = target.strftime('%H:%M:%S')
+            self.config['target_time'] = self.target_time
+            self.log_message(f"[Auto-configure] Set default target_time: {self.target_time}")
+
     def _calculate_countdown(self, current_time_str, target_time_str):
         """Calculate the time difference between current and target time."""
         try:

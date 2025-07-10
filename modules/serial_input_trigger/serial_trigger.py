@@ -42,13 +42,18 @@ class SerialTriggerModule(ModuleBase):
         }
         
         self.log_message(f"Serial Trigger initialized - Port: {self.port}, Baud: {self.baud_rate}, Logic: {self.logic_operator} {self.threshold_value}")
+        self.log_message(f"🔗 Initial callback count: {len(self._event_callbacks)}")
 
     def start(self):
         """Start the serial trigger module"""
+        # Ensure config is set from the latest config dict before connecting
+        self.port = self.config.get('port', self.port)
+        self.baud_rate = int(self.config.get('baud_rate', self.baud_rate))
+        self.logic_operator = self.config.get('logic_operator', self.logic_operator)
+        self.threshold_value = float(self.config.get('threshold_value', self.threshold_value))
         if self._running:
             self.log_message("⚠️ Serial trigger module already running")
             return
-            
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -68,10 +73,12 @@ class SerialTriggerModule(ModuleBase):
     def add_event_callback(self, callback):
         """Add a callback for trigger events"""
         self._event_callbacks.add(callback)
+        self.log_message(f"🔗 Added event callback. Total callbacks: {len(self._event_callbacks)}")
 
     def remove_event_callback(self, callback):
         """Remove a callback for trigger events"""
         self._event_callbacks.discard(callback)
+        self.log_message(f"🔗 Removed event callback. Total callbacks: {len(self._event_callbacks)}")
 
     def update_config(self, config):
         """Update the module configuration"""
@@ -95,6 +102,22 @@ class SerialTriggerModule(ModuleBase):
             self.log_message(f"🔄 Serial config updated - Port: {self.port}, Baud: {self.baud_rate}")
             if self._running:
                 self._reconnect()
+
+    def auto_configure(self):
+        """
+        If no port is set, select the first available port and update config. Set default baud rate if not set.
+        """
+        if not getattr(self, 'port', None):
+            from modules.serial_input_streaming.serial_input import SerialInputModule
+            ports = SerialInputModule.get_available_ports()
+            if ports:
+                self.port = ports[0]
+                self.config['port'] = self.port
+                self.log_message(f"[Auto-configure] Selected port: {self.port}")
+        if not getattr(self, 'baud_rate', None):
+            self.baud_rate = 9600
+            self.config['baud_rate'] = 9600
+            self.log_message("[Auto-configure] Set default baud rate: 9600")
 
     def _connect(self):
         """Establish serial connection"""
@@ -164,55 +187,14 @@ class SerialTriggerModule(ModuleBase):
 
     def _parse_serial_data(self, raw_data):
         """
-        Parse incoming serial data and convert to numeric value.
-        Assumes the data is bytes representing an int or float.
+        Parse incoming serial data as ASCII text and convert to float.
         """
         try:
-            # Try to parse as different numeric formats
-            # First, try as 4-byte float
-            if len(raw_data) >= 4:
-                try:
-                    float_val = struct.unpack('f', raw_data[:4])[0]
-                    return float_val, "float"
-                except struct.error:
-                    pass
-            
-            # Try as 4-byte integer
-            if len(raw_data) >= 4:
-                try:
-                    int_val = struct.unpack('i', raw_data[:4])[0]
-                    return int_val, "integer"
-                except struct.error:
-                    pass
-            
-            # Try as 2-byte integer
-            if len(raw_data) >= 2:
-                try:
-                    int_val = struct.unpack('h', raw_data[:2])[0]
-                    return int_val, "integer"
-                except struct.error:
-                    pass
-            
-            # Try as 1-byte integer
-            if len(raw_data) >= 1:
-                try:
-                    int_val = struct.unpack('b', raw_data[:1])[0]
-                    return int_val, "integer"
-                except struct.error:
-                    pass
-            
-            # If all else fails, try to decode as string and convert
-            try:
-                data_str = raw_data.decode('utf-8', errors='ignore').strip()
-                if '.' in data_str:
-                    return float(data_str), "float"
-                else:
-                    return int(data_str), "integer"
-            except (ValueError, UnicodeDecodeError):
-                pass
-            
-            return None, "unknown"
-            
+            data_str = raw_data.decode('utf-8', errors='ignore').strip()
+            if data_str:
+                return float(data_str), "float"
+            else:
+                return None, "empty"
         except Exception as e:
             self.log_message(f"⚠️ Error parsing serial data: {e}")
             return None, "error"
@@ -225,49 +207,49 @@ class SerialTriggerModule(ModuleBase):
         if value is None:
             return False, "No valid data"
         
-        if self.logic_operator == "=":
-            # Equals logic: trigger when value exactly matches threshold
-            if abs(value - self.threshold_value) < 0.001:  # Small tolerance for floats
-                return True, f"Value {value} equals threshold {self.threshold_value}"
-            return False, f"Value {value} != threshold {self.threshold_value}"
-        
-        elif self.logic_operator == "<":
-            # Less than logic: trigger when crossing below threshold
-            current_below = value < self.threshold_value
-            was_below = self._crossing_state['<']
+        # Use lock to ensure thread safety for crossing state
+        with self._lock:
+            if self.logic_operator == "=":
+                # Equals logic: trigger when value exactly matches threshold
+                if abs(value - self.threshold_value) < 0.001:  # Small tolerance for floats
+                    return True, f"Value {value} equals threshold {self.threshold_value}"
+                return False, f"Value {value} != threshold {self.threshold_value}"
             
-            if current_below and not was_below:
-                # Just crossed below threshold
-                self._crossing_state['<'] = True
-                return True, f"Value {value} crossed below {self.threshold_value}"
-            elif not current_below and was_below:
-                # Just crossed above threshold (reset state)
-                self._crossing_state['<'] = False
-                return False, f"Value {value} crossed above {self.threshold_value} (reset)"
-            else:
-                # No crossing
-                self._crossing_state['<'] = current_below
-                return False, f"Value {value} {'below' if current_below else 'above'} {self.threshold_value}"
-        
-        elif self.logic_operator == ">":
-            # Greater than logic: trigger when crossing above threshold
-            current_above = value > self.threshold_value
-            was_above = self._crossing_state['>']
+            elif self.logic_operator == "<":
+                # Less than logic: trigger when crossing below threshold
+                current_below = value < self.threshold_value
+                was_below = self._crossing_state['<']
+                
+                if current_below and not was_below:
+                    # Just crossed below threshold
+                    self._crossing_state['<'] = True
+                    return True, f"Value {value} crossed below {self.threshold_value}"
+                elif not current_below and was_below:
+                    # Just crossed above threshold (reset state)
+                    self._crossing_state['<'] = False
+                    return False, f"Value {value} crossed above {self.threshold_value} (reset)"
+                else:
+                    # No crossing - don't update state
+                    return False, f"Value {value} {'below' if current_below else 'above'} {self.threshold_value}"
             
-            if current_above and not was_above:
-                # Just crossed above threshold
-                self._crossing_state['>'] = True
-                return True, f"Value {value} crossed above {self.threshold_value}"
-            elif not current_above and was_above:
-                # Just crossed below threshold (reset state)
-                self._crossing_state['>'] = False
-                return False, f"Value {value} crossed below {self.threshold_value} (reset)"
-            else:
-                # No crossing
-                self._crossing_state['>'] = current_above
-                return False, f"Value {value} {'above' if current_above else 'below'} {self.threshold_value}"
-        
-        return False, f"Unknown operator: {self.logic_operator}"
+            elif self.logic_operator == ">":
+                # Greater than logic: trigger when crossing above threshold
+                current_above = value > self.threshold_value
+                was_above = self._crossing_state['>']
+                
+                if current_above and not was_above:
+                    # Just crossed above threshold
+                    self._crossing_state['>'] = True
+                    return True, f"Value {value} crossed above {self.threshold_value}"
+                elif not current_above and was_above:
+                    # Just crossed below threshold (reset state)
+                    self._crossing_state['>'] = False
+                    return False, f"Value {value} crossed below {self.threshold_value} (reset)"
+                else:
+                    # No crossing - don't update state
+                    return False, f"Value {value} {'above' if current_above else 'below'} {self.threshold_value}"
+            
+            return False, f"Unknown operator: {self.logic_operator}"
 
     def _run(self):
         """Main serial reading loop"""
@@ -278,28 +260,19 @@ class SerialTriggerModule(ModuleBase):
                     if not self._connect():
                         time.sleep(2)  # Wait before retrying
                         continue
-                
                 # Read data from serial port
                 if self.serial_connection and self.serial_connection.in_waiting > 0:
                     try:
                         # Read available data
                         data = self.serial_connection.read(self.serial_connection.in_waiting)
-                        
                         if data:
-                            # Add to buffer and process
+                            # Add to buffer and process lines
                             self._buffer += data
-                            
-                            # Process complete chunks (assuming 4-byte values)
-                            while len(self._buffer) >= 4:
-                                chunk = self._buffer[:4]
-                                self._buffer = self._buffer[4:]
-                                
-                                # Parse the chunk
-                                value, value_type = self._parse_serial_data(chunk)
-                                
+                            while b'\n' in self._buffer:
+                                line, self._buffer = self._buffer.split(b'\n', 1)
+                                value, value_type = self._parse_serial_data(line)
                                 if value is not None:
                                     self._handle_value(value, value_type)
-                                    
                     except serial.SerialException as e:
                         self.log_message(f"⚠️ Serial read error: {e}")
                         self._reconnect()
@@ -307,10 +280,8 @@ class SerialTriggerModule(ModuleBase):
                     except Exception as e:
                         self.log_message(f"⚠️ Error processing serial data: {e}")
                         continue
-                
                 # Small delay to prevent busy waiting
                 time.sleep(0.01)
-                
             except Exception as e:
                 self.log_message(f"❌ Error in serial read loop: {e}")
                 time.sleep(1)
@@ -319,18 +290,20 @@ class SerialTriggerModule(ModuleBase):
         """Handle parsed value and evaluate logic"""
         with self._lock:
             self.current_value = value
-        
-        # Evaluate logic condition
+
+        # Notify GUI of value update (for display purposes)
+        self.notify_gui_update()
+
+        # Evaluate logic condition for trigger
         should_trigger, reason = self._evaluate_logic(value)
-        
         with self._lock:
             if should_trigger:
                 self.trigger_status = f"Triggered: {reason}"
                 self._last_triggered = True
             else:
                 self.trigger_status = f"Waiting: {reason}"
-        
-        # Fire trigger if condition met
+
+        # Only fire trigger if condition is met
         if should_trigger:
             self._fire_trigger(value, value_type, reason)
 
@@ -348,11 +321,13 @@ class SerialTriggerModule(ModuleBase):
         }
         
         self.log_message(f"🎯 TRIGGER: {reason} (Value: {value}, Type: {value_type})")
+        self.log_message(f"🎯 TRIGGER: Sending to {len(self._event_callbacks)} callbacks")
         
         # Send to all callbacks
         for callback in list(self._event_callbacks):
             try:
                 callback(event)
+                self.log_message(f"🎯 TRIGGER: Callback executed successfully")
             except Exception as e:
                 self.log_message(f"❌ Error in trigger callback: {e}")
 
@@ -361,7 +336,7 @@ class SerialTriggerModule(ModuleBase):
         with self._lock:
             return {
                 'connection_status': self.connection_status,
-                'current_value': f"{self.current_value:.3f}" if self.current_value is not None else "No data",
+                'current_value': f"{self.current_value:.1f}" if self.current_value is not None else "No data",
                 'trigger_status': self.trigger_status
             }
 
@@ -369,6 +344,25 @@ class SerialTriggerModule(ModuleBase):
         """Update the GUI display with current status and data"""
         # This method can be called by the GUI to update status labels
         pass
+
+    def notify_gui_update(self):
+        """Notify GUI of value update (for display purposes only, not triggers)"""
+        if self.current_value is not None:
+            event = {
+                'value': f"{self.current_value:.1f}",
+                'value_type': 'float',
+                'threshold': self.threshold_value,
+                'operator': self.logic_operator,
+                'timestamp': time.time(),
+                'trigger': False,
+                'gui_update': True  # Flag to indicate this is just a GUI update
+            }
+            self.log_message(f"📊 GUI Update: Value = {self.current_value:.1f}")
+            for callback in list(self._event_callbacks):
+                try:
+                    callback(event)
+                except Exception as e:
+                    self.log_message(f"❌ Error in GUI update callback: {e}")
 
     @staticmethod
     def get_available_ports():
