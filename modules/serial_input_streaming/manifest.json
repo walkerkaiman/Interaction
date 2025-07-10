@@ -1,0 +1,35 @@
+{
+  "name": "Serial Input",
+  "type": "input",
+  "classification": "streaming",
+  "mode": "streaming",
+  "description": "Connects to a serial port and streams incoming data to connected outputs. Supports automatic port detection and common baud rates.",
+  "fields": [
+    {
+      "name": "port",
+      "type": "dropdown",
+      "label": "Serial Port",
+      "default": "",
+      "options": []
+    },
+    {
+      "name": "baud_rate",
+      "type": "dropdown",
+      "label": "Baud Rate",
+      "default": "9600",
+      "options": ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"]
+    },
+    {
+      "name": "connection_status",
+      "type": "label",
+      "label": "Connection Status",
+      "default": "Disconnected"
+    },
+    {
+      "name": "incoming_data",
+      "type": "label",
+      "label": "Incoming Data",
+      "default": "No data received"
+    }
+  ]
+} 

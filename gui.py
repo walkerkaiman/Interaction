@@ -359,6 +359,9 @@ class InteractionBlock:
         # Start updating display for Clock module
         if self.input_var.get() == "clock_input_trigger":
             self.start_clock_display_update()
+        # Start updating display for Serial module
+        elif self.input_var.get() == "serial_input_streaming":
+            self.start_serial_display_update()
 
     def start_clock_display_update(self):
         """Start periodic updates for Clock module display."""
@@ -385,6 +388,32 @@ class InteractionBlock:
                 self.frame.after(1000, update_clock_display)
         # Start the update cycle immediately
         update_clock_display()
+
+    def start_serial_display_update(self):
+        """Start periodic updates for Serial module display."""
+        def update_serial_display():
+            if self.input_var.get() == "serial_input_streaming":
+                # Update connection status label
+                connection_status_label = self.input_config_fields.get('connection_status')
+                if connection_status_label and self.input_instance:
+                    # Get status from the module
+                    display_data = self.input_instance.get_display_data()
+                    status = display_data.get('connection_status', 'Disconnected')
+                    connection_status_label.config(text=f"Connection Status: {status}")
+                
+                # Update incoming data label
+                incoming_data_label = self.input_config_fields.get('incoming_data')
+                if incoming_data_label and self.input_instance:
+                    # Get data from the module
+                    display_data = self.input_instance.get_display_data()
+                    data = display_data.get('incoming_data', 'No data received')
+                    incoming_data_label.config(text=f"Incoming Data: {data}")
+            
+            # Schedule next update (every 500ms for more responsive serial data)
+            if self.input_var.get() == "serial_input_streaming":
+                self.frame.after(500, update_serial_display)
+        # Start the update cycle immediately
+        update_serial_display()
     
     def remove_self(self):
         self.cursor_running = False
@@ -587,12 +616,66 @@ class InteractionBlock:
                     countdown_label = ttk.Label(self.input_fields_container, text="Time Until Target: --:--:--", style="Label.TLabel")
                     countdown_label.pack(anchor="w", padx=5, pady=(10, 5))
                     self.input_config_fields[field["name"]] = countdown_label
+                elif field["name"] == "connection_status":
+                    # Create a label for connection status
+                    connection_status_label = ttk.Label(self.input_fields_container, text=f"{field['label']}: {field.get('default', 'Disconnected')}", style="Label.TLabel")
+                    connection_status_label.pack(anchor="w", padx=5, pady=(10, 5))
+                    self.input_config_fields[field["name"]] = connection_status_label
+                elif field["name"] == "incoming_data":
+                    # Create a label for incoming data
+                    incoming_data_label = ttk.Label(self.input_fields_container, text=f"{field['label']}: {field.get('default', 'No data received')}", style="Label.TLabel")
+                    incoming_data_label.pack(anchor="w", padx=5, pady=(10, 5))
+                    self.input_config_fields[field["name"]] = incoming_data_label
                 else:
                     # For other label fields, show the default value
                     default_value = field.get("default", "")
                     label = ttk.Label(self.input_fields_container, text=f"{field['label']}: {default_value}", style="Label.TLabel")
                     label.pack(anchor="w", padx=5, pady=(10, 5))
                     self.input_config_fields[field["name"]] = label
+                continue
+            elif field["type"] == "dropdown":
+                # Handle dropdown fields
+                label = ttk.Label(self.input_fields_container, text=field["label"], style="Label.TLabel")
+                label.pack(anchor="w", padx=5, pady=(10, 5))
+                
+                # Get options for the dropdown
+                options = field.get("options", [])
+                
+                # Special handling for serial port dropdown
+                if field["name"] == "port" and module_name == "serial_input_streaming":
+                    try:
+                        # Import and get available ports
+                        from modules.serial_input_streaming.serial_input import SerialInputModule
+                        options = SerialInputModule.get_available_ports()
+                        if not options:
+                            options = ["No ports available"]
+                    except Exception as e:
+                        self.logger.show_mode(f"⚠️ Error getting serial ports: {e}")
+                        options = ["Error getting ports"]
+                
+                # Create combobox
+                combo_var = tk.StringVar(value=field.get("default", ""))
+                combo = ttk.Combobox(self.input_fields_container, textvariable=combo_var, 
+                                   values=options, state="readonly", style="Combo.TCombobox")
+                combo.pack(fill="x", pady=(0, 10), padx=5)
+                
+                # Bind change events
+                if field["name"] == "port":
+                    def on_serial_port_change(event=None, self=self, combo_var=combo_var):
+                        value = combo_var.get()
+                        if value and value != "No ports available" and value != "Error getting ports":
+                            self.update_input_instance_with_new_serial_port(value)
+                    combo.bind("<<ComboboxSelected>>", on_serial_port_change)
+                elif field["name"] == "baud_rate":
+                    def on_baud_change(event=None, self=self, combo_var=combo_var):
+                        value = combo_var.get()
+                        if value:
+                            self.update_input_instance_with_new_baud_rate(value)
+                    combo.bind("<<ComboboxSelected>>", on_baud_change)
+                else:
+                    combo.bind("<<ComboboxSelected>>", lambda e: self.on_input_change())
+                
+                self.input_config_fields[field["name"]] = combo_var
                 continue
             # For all other field types, create label + entry
             label = ttk.Label(self.input_fields_container, text=field["label"], style="Label.TLabel")
@@ -729,6 +812,42 @@ class InteractionBlock:
                     self.start_clock_display_update()
                 except Exception as e:
                     self.logger.show_mode(f"⚠️ Failed to create clock input instance: {e}")
+            elif module_name == "serial_input_streaming":
+                # Handle Serial input module
+                def block_event_callback(data):
+                    self.logger.show_mode(f"📡 Serial event received: {data}")
+                    # Direct connection to output module for Serial
+                    if self.output_instance:
+                        # Update output instance with current config
+                        if hasattr(self.output_instance, "update_config"):
+                            self.output_instance.update_config(self.get_output_config())
+                        # Ensure cursor callback is set
+                        if hasattr(self.output_instance, "set_cursor_callback"):
+                            self.output_instance.set_cursor_callback(self.start_audio_playback)
+                        # Ensure output instance is started
+                        if hasattr(self.output_instance, "start"):
+                            self.output_instance.start()
+                        # Send event to output
+                        self.output_instance.handle_event(data)
+                    else:
+                        self.logger.show_mode(f"⚠️ Serial: No output instance to send event to")
+                
+                try:
+                    self.input_instance = self.loader.create_module_instance(
+                        module_name,
+                        config,
+                        log_callback=self.logger.show_mode
+                    )
+                    # Add the event callback directly to the Serial module
+                    self.input_instance.add_event_callback(block_event_callback)
+                    self.logger.show_mode(f"🔗 Serial: Added event callback to module")
+                    
+                    self.input_instance.start()
+                    self.logger.show_mode(f"🚀 Serial: Module started")
+                    # Start the display update immediately
+                    self.start_serial_display_update()
+                except Exception as e:
+                    self.logger.show_mode(f"⚠️ Failed to create serial input instance: {e}")
             else:
                 try:
                     self.input_instance = self.loader.create_module_instance(
@@ -770,6 +889,32 @@ class InteractionBlock:
                 config["target_time"] = target_time
                 self.input_instance.update_config(config)
                 self.logger.show_mode(f"⚙️ Clock module config updated: target_time = {target_time}")
+            # Trigger config save
+            if self.on_change_callback:
+                self.on_change_callback()
+
+    def update_input_instance_with_new_serial_port(self, port):
+        """Update the Serial module's port."""
+        if self.input_var.get() == "serial_input_streaming":
+            # Update the module's config directly
+            if self.input_instance and hasattr(self.input_instance, 'update_config'):
+                config = self.get_input_config()
+                config["port"] = port
+                self.input_instance.update_config(config)
+                self.logger.show_mode(f"⚙️ Serial module config updated: port = {port}")
+            # Trigger config save
+            if self.on_change_callback:
+                self.on_change_callback()
+
+    def update_input_instance_with_new_baud_rate(self, baud_rate):
+        """Update the Serial module's baud rate."""
+        if self.input_var.get() == "serial_input_streaming":
+            # Update the module's config directly
+            if self.input_instance and hasattr(self.input_instance, 'update_config'):
+                config = self.get_input_config()
+                config["baud_rate"] = baud_rate
+                self.input_instance.update_config(config)
+                self.logger.show_mode(f"⚙️ Serial module config updated: baud_rate = {baud_rate}")
             # Trigger config save
             if self.on_change_callback:
                 self.on_change_callback()
@@ -1120,8 +1265,12 @@ class InteractionBlock:
             self.draw_input_fields(create_instance=False)
             for k, v in preset["input"].get("config", {}).items():
                 if k in self.input_config_fields:
-                    self.input_config_fields[k].delete(0, tk.END)
-                    self.input_config_fields[k].insert(0, v)
+                    field = self.input_config_fields[k]
+                    if isinstance(field, tk.Entry):
+                        field.delete(0, tk.END)
+                        field.insert(0, v)
+                    elif isinstance(field, tk.StringVar):
+                        field.set(v)
                     self.logger.show_mode(f"🔧 Loaded {k} = {v} for {input_module}")
             
             # Now create instance with the populated config values
@@ -1143,6 +1292,14 @@ class InteractionBlock:
                             self.output_instance.handle_event(data)
                     self.input_instance.add_event_callback(block_event_callback)
                     self.start_clock_display_update()
+                elif input_module == "serial_input_streaming":
+                    # Add event callback for Serial module
+                    def block_event_callback(data):
+                        self.connect_modules()
+                        if self.output_instance:
+                            self.output_instance.handle_event(data)
+                    self.input_instance.add_event_callback(block_event_callback)
+                    self.start_serial_display_update()
                     # Verify the target time was set correctly
                     if hasattr(self.input_instance, 'target_time'):
                         self.logger.show_mode(f"🔧 Clock module target_time after creation: {self.input_instance.target_time}")
@@ -1202,6 +1359,9 @@ class InteractionBlock:
                     config[k] = v.get() # Keep as string
                 else:
                     config[k] = v.get()
+            elif isinstance(v, tk.StringVar):
+                # Handle dropdown fields (StringVar)
+                config[k] = v.get()
         return config
 
     def get_output_config(self):
