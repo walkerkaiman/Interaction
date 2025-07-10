@@ -197,9 +197,15 @@ class ModuleLoader:
             ]
             print(f"⚠️ Auto-generated 'fields' from 'config_schema' for manifest: {manifest.get('name', 'unknown')}")
             return True
-        if not fields or not schema:
+        if not fields and not schema:
             return False
-        # Check for mismatches
+        # If only fields exist without schema, that's valid
+        if fields and not schema:
+            return True
+        # If only schema exists without fields, that's also valid (fields will be auto-generated)
+        if schema and not fields:
+            return True
+        # Check for mismatches when both exist
         field_names = {f['name'] for f in fields}
         schema_names = set(schema.keys())
         missing_in_schema = field_names - schema_names
@@ -383,7 +389,7 @@ class ModuleLoader:
         Note: This method checks that all required fields are present and
         that field types match the schema definition.
         """
-        if 'config_schema' not in manifest:
+        if 'config_schema' not in manifest and 'fields' not in manifest:
             return True  # No schema defined, assume valid
         
         schema = manifest['config_schema']

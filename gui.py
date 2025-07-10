@@ -245,9 +245,9 @@ class InteractionBlock:
                             self.logger.verbose(f"🎯 Serial trigger event received: {data}")
                         # Update the current value label immediately, thread-safe
                         current_value_label = self.input_config_fields.get('current_value')
-                        if current_value_label:
+                        if current_value_label and current_value_label.winfo_exists():
                             value = data.get('value', 'No data')
-                            self.frame.after(0, lambda: current_value_label.config(text=f"Value: {value}"))
+                            self.frame.after(0, lambda: current_value_label.config(text=f"Value: {value}") if current_value_label.winfo_exists() else None)
                         # Send actual triggers to the output module
                         if data.get('trigger', False):
                             self.logger.verbose(f"🎯 Serial trigger: Processing trigger event")
@@ -439,6 +439,9 @@ class InteractionBlock:
         # Start updating display for Serial Trigger module
         elif self.input_var.get() == "serial_input_trigger":
             self.start_serial_trigger_display_update()
+        # Start updating display for sACN Frames module
+        elif self.input_var.get() == "sacn_frames_input_trigger":
+            self.start_sacn_frames_display_update()
 
     def start_clock_display_update(self):
         """Start periodic updates for Clock module display."""
@@ -525,6 +528,27 @@ class InteractionBlock:
                 self.frame.after(500, update_serial_trigger_display)
         # Start the update cycle immediately
         update_serial_trigger_display()
+
+    def start_sacn_frames_display_update(self):
+        """Start periodic updates for sACN Frames module display."""
+        def update_sacn_frames_display():
+            if self.input_var.get() == "sacn_frames_input_trigger":
+                # Update frame number label
+                frame_number_label = self.input_config_fields.get('frame_number')
+                if frame_number_label and self.input_instance:
+                    # Get frame number from the module
+                    display_data = self.input_instance.get_display_data()
+                    frame_number = display_data.get('frame_number', 'No frame received')
+                    frame_number_label.config(text=frame_number)
+                
+                # Universe is hardcoded to 999, no label update needed
+            
+            # Schedule next update (every 100ms for responsive frame updates)
+            if self.input_var.get() == "sacn_frames_input_trigger":
+                self.frame.after(100, update_sacn_frames_display)
+        
+        # Start the update cycle immediately
+        update_sacn_frames_display()
 
     def remove_self(self):
         self.cursor_running = False
@@ -748,6 +772,11 @@ class InteractionBlock:
                     incoming_data_label = ttk.Label(self.input_fields_container, text=f"{field['label']}: {field.get('default', 'No data received')}", style="Label.TLabel")
                     incoming_data_label.pack(anchor="w", padx=5, pady=(10, 5))
                     self.input_config_fields[field["name"]] = incoming_data_label
+                elif field["name"] == "frame_number":
+                    # Create a label for frame number (sACN module)
+                    frame_number_label = ttk.Label(self.input_fields_container, text=f"{field['label']}: {field.get('default', 'No frame received')}", style="Label.TLabel")
+                    frame_number_label.pack(anchor="w", padx=5, pady=(10, 5))
+                    self.input_config_fields[field["name"]] = frame_number_label
                 else:
                     # For other label fields, show the default value
                     default_value = field.get("default", "")
@@ -998,9 +1027,9 @@ class InteractionBlock:
                     self.logger.verbose(f"🎯 Serial trigger event received: {data}")
                     # Update the current value label immediately, thread-safe
                     current_value_label = self.input_config_fields.get('current_value')
-                    if current_value_label:
+                    if current_value_label and self.input_instance:
                         value = data.get('value', 'No data')
-                        self.frame.after(0, lambda: current_value_label.config(text=f"Value: {value}"))
+                        self.frame.after(0, lambda: current_value_label.config(text=f"Value: {value}") if current_value_label.winfo_exists() else None)
                         self.logger.verbose(f"🎯 Serial trigger: Updated GUI label to '{value}'")
                     
                     # Send actual triggers to the output module
@@ -1288,6 +1317,13 @@ class InteractionBlock:
                     "label": value_label
                 }
                 continue
+            elif field["type"] == "display":
+                # Create display label (read-only)
+                label = ttk.Label(self.output_fields_container, text=field.get("default", "No data"), style="Label.TLabel")
+                label.pack(anchor="w", padx=5, pady=(10, 5))
+                
+                self.output_config_fields[field["name"]] = label
+                continue
 
             label = ttk.Label(self.output_fields_container, text=field["label"], style="Label.TLabel")
             label.pack(anchor="w", padx=5, pady=(10, 5))
@@ -1423,9 +1459,9 @@ class InteractionBlock:
                         self.logger.verbose(f"🎯 Serial trigger event received: {data}")
                         # Update the current value label immediately, thread-safe
                         current_value_label = self.input_config_fields.get('current_value')
-                        if current_value_label:
+                        if current_value_label and self.input_instance:
                             value = data.get('value', 'No data')
-                            self.frame.after(0, lambda: current_value_label.config(text=f"Value: {value}"))
+                            self.frame.after(0, lambda: current_value_label.config(text=f"Value: {value}") if current_value_label.winfo_exists() else None)
                         # Direct connection to output module for Serial Trigger
                         if self.output_instance:
                             # Update output instance with current config
@@ -1442,11 +1478,41 @@ class InteractionBlock:
                         else:
                             self.logger.verbose(f"⚠️ Serial Trigger: No output instance to send event to")
                     
+                                    # Clear existing callbacks and add the new one
+                self.input_instance._event_callbacks.clear()
+                self.input_instance.add_event_callback(block_event_callback)
+                if self.logger.level == "verbose":
+                    self.logger.verbose(f"🔗 Serial Trigger: Re-registered event callback after output change")
+                # Special handling for sACN Frames modules - re-register event callback
+                elif self.input_var.get() == "sacn_frames_input_trigger" and self.input_instance:
+                    def block_event_callback(data):
+                        self.logger.verbose(f"🎬 sACN frame event received: {data}")
+                        # Update the frame number label immediately, thread-safe
+                        frame_number_label = self.input_config_fields.get('frame_number')
+                        if frame_number_label:
+                            frame_number = data.get('frame_number', 'No frame')
+                            self.frame.after(0, lambda: frame_number_label.config(text=str(frame_number)) if frame_number_label.winfo_exists() else None)
+                        # Direct connection to output module for sACN Frames
+                        if self.output_instance:
+                            # Update output instance with current config
+                            if hasattr(self.output_instance, "update_config"):
+                                self.output_instance.update_config(self.get_output_config())
+                            # Ensure cursor callback is set
+                            if hasattr(self.output_instance, "set_cursor_callback"):
+                                self.output_instance.set_cursor_callback(self.start_audio_playback)
+                            # Ensure output instance is started
+                            if hasattr(self.output_instance, "start"):
+                                self.output_instance.start()
+                            # Send event to output
+                            self.output_instance.handle_event(data)
+                        else:
+                            self.logger.verbose(f"⚠️ sACN Frames: No output instance to send event to")
+                    
                     # Clear existing callbacks and add the new one
                     self.input_instance._event_callbacks.clear()
                     self.input_instance.add_event_callback(block_event_callback)
                     if self.logger.level == "verbose":
-                        self.logger.verbose(f"🔗 Serial Trigger: Re-registered event callback after output change")
+                        self.logger.verbose(f"🔗 sACN Frames: Re-registered event callback after output change")
             else:
                 # For other modules, use the standard connect_modules
                 self.connect_modules()
