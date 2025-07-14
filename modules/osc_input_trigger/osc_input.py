@@ -93,7 +93,7 @@ class OSCInputModule(ModuleBase):
         # No internal callback list needed
         
         # Log initialization
-        self.log_message(f"OSC Input initialized - Port: {self.port}, Address: {self.address}")
+        self.log_message(f"OSC Input initialized - Port: {self.port}, Address: {self.address}, Listening on all interfaces (0.0.0.0)")
     
     def start(self):
         """
@@ -116,7 +116,7 @@ class OSCInputModule(ModuleBase):
             self.server_manager.register_callback(self.port, self.address, self._handle_osc_message)
             
             self.is_running = True
-            self.log_message(f"✅ OSC server started on port {self.port}, listening for '{self.address}'")
+            self.log_message(f"✅ OSC server started on port {self.port}, listening for '{self.address}' on all interfaces (0.0.0.0)")
             
         except Exception as e:
             self.log_message(f"❌ Failed to start OSC server: {e}")
@@ -253,6 +253,7 @@ class OSCInputModule(ModuleBase):
         return {
             "port": self.port,
             "address": self.address,
+            "interface": "0.0.0.0 (All Interfaces)",
             "running": self.is_running,
             "server_running": self.port in self.server_manager.servers
         }
@@ -335,3 +336,26 @@ class OSCInputModule(ModuleBase):
                 if field['name'] == field_name:
                     return field.get('options')
         return None
+
+    def handle_button_action(self, action_name):
+        """
+        Handle button actions from the GUI.
+        
+        Args:
+            action_name (str): Name of the button action to handle
+            
+        Note: This method is called by the GUI when a button in the module's
+        configuration is clicked. Currently supports 'reset' action.
+        """
+        if action_name == "reset":
+            self.log_message("🔄 Reset button pressed - restarting OSC server")
+            # Restart the server to clear any issues
+            if self.is_running:
+                self.stop()
+                time.sleep(0.1)  # Brief delay to ensure cleanup
+                self.start()
+                self.log_message("✅ OSC server restarted after reset")
+            else:
+                self.log_message("⚠️ Cannot reset - server not running")
+        else:
+            self.log_message(f"⚠️ Unknown button action: {action_name}")

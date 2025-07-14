@@ -392,28 +392,30 @@ class ModuleLoader:
         if 'config_schema' not in manifest and 'fields' not in manifest:
             return True  # No schema defined, assume valid
         
-        schema = manifest['config_schema']
-        
-        # Check required fields
-        for field_name, field_info in schema.items():
-            if field_info.get('required', False) and field_name not in config:
-                print(f"❌ Missing required configuration field: {field_name}")
-                return False
+        # Use config_schema if available, otherwise skip validation
+        if 'config_schema' in manifest:
+            schema = manifest['config_schema']
             
-            # Check field type if specified
-            if field_name in config and 'type' in field_info:
-                expected_type = field_info['type']
-                actual_value = config[field_name]
+            # Check required fields
+            for field_name, field_info in schema.items():
+                if field_info.get('required', False) and field_name not in config:
+                    print(f"❌ Missing required configuration field: {field_name}")
+                    return False
                 
-                if expected_type == 'number' and not isinstance(actual_value, (int, float)):
-                    print(f"❌ Configuration field '{field_name}' must be a number")
-                    return False
-                elif expected_type == 'string' and not isinstance(actual_value, str):
-                    print(f"❌ Configuration field '{field_name}' must be a string")
-                    return False
-                elif expected_type == 'boolean' and not isinstance(actual_value, bool):
-                    print(f"❌ Configuration field '{field_name}' must be a boolean")
-                    return False
+                # Check field type if specified
+                if field_name in config and 'type' in field_info:
+                    expected_type = field_info['type']
+                    actual_value = config[field_name]
+                    
+                    if expected_type == 'number' and not isinstance(actual_value, (int, float)):
+                        print(f"❌ Configuration field '{field_name}' must be a number")
+                        return False
+                    elif expected_type == 'string' and not isinstance(actual_value, str):
+                        print(f"❌ Configuration field '{field_name}' must be a string")
+                        return False
+                    elif expected_type == 'boolean' and not isinstance(actual_value, bool):
+                        print(f"❌ Configuration field '{field_name}' must be a boolean")
+                        return False
         
         return True
     

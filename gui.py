@@ -264,6 +264,39 @@ class InteractionBlock:
                                 self.logger.verbose(f"⚠️ Serial Trigger: No output instance to send event to")
                     self.input_instance.add_event_callback(block_event_callback)
                     self.logger.verbose(f"🔗 Serial Trigger: Added event callback to module")
+                # Add event callback for sacn_frames_input_trigger
+                elif input_module == "sacn_frames_input_trigger":
+                    def block_event_callback(data):
+                        self.logger.verbose(f"🎬 sACN frame event received: {data}")
+                        # Update the frame number label immediately, thread-safe
+                        frame_number_label = self.input_config_fields.get('frame_number')
+                        if frame_number_label and self.input_instance:
+                            frame_number = data.get('frame_number', 0)
+                            self.frame.after(0, lambda: frame_number_label.config(text=f"Frame Number: {frame_number}") if frame_number_label.winfo_exists() else None)
+                        
+                        # Send triggers to the output module
+                        if data.get('trigger', False):
+                            self.logger.verbose(f"🎬 sACN: Processing trigger event")
+                            # Direct connection to output module for sACN Frames
+                            if self.output_instance:
+                                # Update output instance with current config
+                                if hasattr(self.output_instance, "update_config"):
+                                    self.output_instance.update_config(self.get_output_config())
+                                # Ensure cursor callback is set
+                                if hasattr(self.output_instance, "set_cursor_callback"):
+                                    self.output_instance.set_cursor_callback(self.start_audio_playback)
+                                # Ensure output instance is started
+                                if hasattr(self.output_instance, "start"):
+                                    self.output_instance.start()
+                                # Send event to output
+                                self.output_instance.handle_event(data)
+                                self.logger.verbose(f"🎬 sACN: Sent event to output module")
+                            else:
+                                self.logger.verbose(f"⚠️ sACN: No output instance to send event to")
+                        else:
+                            self.logger.verbose(f"🎬 sACN: Non-trigger event (GUI update only)")
+                    self.input_instance.add_event_callback(block_event_callback)
+                    self.logger.verbose(f"🔗 sACN Frames: Added event callback to module")
                 
                 self.input_instance.start()
                 # Special handling for Clock module - start display update
@@ -272,6 +305,9 @@ class InteractionBlock:
                 # Special handling for Serial Trigger module - start display update
                 elif input_module == "serial_input_trigger":
                     self.start_serial_trigger_display_update()
+                # Special handling for sACN Frames module - start display update
+                elif input_module == "sacn_frames_input_trigger":
+                    self.start_sacn_frames_display_update()
         else:
             self.logger.verbose(f"⚠️ Invalid input module: '{input_module}'")
         # Populate output fields
@@ -539,7 +575,7 @@ class InteractionBlock:
                     # Get frame number from the module
                     display_data = self.input_instance.get_display_data()
                     frame_number = display_data.get('frame_number', 'No frame received')
-                    frame_number_label.config(text=frame_number)
+                    frame_number_label.config(text=f"Frame Number: {frame_number}")
                 
                 # Universe is hardcoded to 999, no label update needed
             
@@ -1070,6 +1106,54 @@ class InteractionBlock:
                     self.start_serial_trigger_display_update()
                 except Exception as e:
                     self.logger.verbose(f"⚠️ Failed to create serial trigger input instance: {e}")
+            elif module_name == "sacn_frames_input_trigger":
+                # Handle sACN Frames input module
+                def block_event_callback(data):
+                    self.logger.verbose(f"🎬 sACN frame event received: {data}")
+                    # Update the frame number label immediately, thread-safe
+                    frame_number_label = self.input_config_fields.get('frame_number')
+                    if frame_number_label and self.input_instance:
+                        frame_number = data.get('frame_number', 0)
+                        self.frame.after(0, lambda: frame_number_label.config(text=f"Frame Number: {frame_number}") if frame_number_label.winfo_exists() else None)
+                    
+                    # Send triggers to the output module
+                    if data.get('trigger', False):
+                        self.logger.verbose(f"🎬 sACN: Processing trigger event")
+                        # Direct connection to output module for sACN Frames
+                        if self.output_instance:
+                            # Update output instance with current config
+                            if hasattr(self.output_instance, "update_config"):
+                                self.output_instance.update_config(self.get_output_config())
+                            # Ensure cursor callback is set
+                            if hasattr(self.output_instance, "set_cursor_callback"):
+                                self.output_instance.set_cursor_callback(self.start_audio_playback)
+                            # Ensure output instance is started
+                            if hasattr(self.output_instance, "start"):
+                                self.output_instance.start()
+                            # Send event to output
+                            self.output_instance.handle_event(data)
+                            self.logger.verbose(f"🎬 sACN: Sent event to output module")
+                        else:
+                            self.logger.verbose(f"⚠️ sACN: No output instance to send event to")
+                    else:
+                        self.logger.verbose(f"🎬 sACN: Non-trigger event (GUI update only)")
+                
+                try:
+                    self.input_instance = self.loader.create_module_instance(
+                        module_name,
+                        config,
+                        log_callback=self.logger.verbose
+                    )
+                    # Add the event callback directly to the sACN Frames module
+                    self.input_instance.add_event_callback(block_event_callback)
+                    self.logger.verbose(f"🔗 sACN Frames: Added event callback to module")
+                    
+                    self.input_instance.start()
+                    self.logger.verbose(f"🚀 sACN Frames: Module started")
+                    # Start the display update immediately
+                    self.start_sacn_frames_display_update()
+                except Exception as e:
+                    self.logger.verbose(f"⚠️ Failed to create sACN frames input instance: {e}")
             else:
                 try:
                     self.input_instance = self.loader.create_module_instance(
@@ -1370,10 +1454,16 @@ class InteractionBlock:
             self.output_instance.stop()
         # Create output instance
         try:
+            # Use appropriate logging method based on module type
+            if module_name == "osc_output_trigger" or module_name == "osc_output_streaming":
+                log_callback = self.logger.osc
+            else:
+                log_callback = self.logger.verbose
+            
             self.output_instance = self.loader.create_module_instance(
                 module_name,
                 self.get_output_config(),
-                log_callback=self.logger.verbose
+                log_callback=log_callback
             )
             # Set log level for the new module
             if hasattr(self.output_instance, 'log_level'):
@@ -1615,20 +1705,32 @@ class InteractionBlock:
             self.logger.verbose("⚠️ No output module selected")
             return
 
+        if not self.output_instance:
+            self.logger.verbose("⚠️ No output instance available")
+            return
+
         try:
-            instance = self.loader.create_module_instance(output_module, self.get_output_config(), log_callback=self.logger.verbose)
+            # Use the existing output instance instead of creating a new one
+            self.logger.verbose(f"🔘 Manual trigger button pressed for {output_module}")
             
-            # Set log level for the new instance
-            if hasattr(instance, 'log_level'):
-                instance.log_level = 'verbose'  # Always verbose for testing
+            # Update the output instance with current config
+            if hasattr(self.output_instance, "update_config"):
+                self.output_instance.update_config(self.get_output_config())
             
-            # Set cursor callback on the instance
-            if hasattr(instance, "set_cursor_callback"):
-                self.logger.verbose(f"🎵 Setting cursor callback on manual trigger instance")
-                instance.set_cursor_callback(self.start_audio_playback)
+            # Ensure the output instance is started
+            if hasattr(self.output_instance, "start"):
+                self.output_instance.start()
             
-            instance.start()
-            instance.handle_event({})
+            # Send a trigger event to the output module
+            # For trigger modules, send a trigger event
+            if "trigger" in output_module:
+                trigger_data = {"trigger": True}
+            else:
+                trigger_data = {"value": "manual_trigger"}
+            
+            self.output_instance.handle_event(trigger_data)
+            self.logger.verbose(f"✅ Manual trigger sent to {output_module}")
+            
         except Exception as e:
             self.logger.verbose(f"💥 Failed to trigger output: {e}")
 

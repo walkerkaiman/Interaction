@@ -90,18 +90,23 @@ class SACNFramesInputModule(ModuleBase):
             return
         
         try:
+            self.log_message("[DEBUG] Creating sACN receiver instance...")
             # Create sACN receiver
             self.receiver = sacn.sACNreceiver()
             self.receiver.start()
+            self.log_message("[DEBUG] sACN receiver started.")
+            
+            # Set callback for DMX data changes using the correct API
+            self.log_message("[DEBUG] Setting on_dmx_data_change callback...")
+            self.receiver.on_dmx_data_change = self._dmx_data_callback
             
             # Join the universe
+            self.log_message(f"[DEBUG] Joining multicast universe {self.universe}...")
             self.receiver.join_multicast(self.universe)
             self.log_message(f"📡 Joined sACN Universe {self.universe}")
             
-            # Start receiver thread
+            # Start receiver thread (kept for potential future use)
             self.is_running = True
-            self.receiver_thread = threading.Thread(target=self._receiver_loop, daemon=True)
-            self.receiver_thread.start()
             
             self.log_message(f"✅ sACN receiver started on Universe {self.universe}")
             
@@ -129,49 +134,44 @@ class SACNFramesInputModule(ModuleBase):
         if self.receiver_thread and self.receiver_thread.is_alive():
             self.receiver_thread.join(timeout=1.0)
     
-    def _receiver_loop(self):
+    def _dmx_data_callback(self, packet):
         """
-        Main receiver loop that processes incoming sACN data.
+        Callback function for DMX data changes.
         
-        This method runs in a separate thread and continuously processes
-        incoming sACN packets, extracting frame numbers and triggering events.
+        Args:
+            packet: sACN data packet containing universe and DMX data
         """
-        while self.is_running:
-            try:
-                # Get data from the universe
-                data = self.receiver.get_data(self.universe) if self.receiver else None
-                if data:
-                    # Extract frame number from channels 1 and 2
-                    frame_number = self._extract_frame_number(data)
-                    
-                    # Update current frame
-                    with self.frame_lock:
-                        self.current_frame = frame_number
-                    
-                    # Check if frame number changed
-                    if frame_number != self.last_frame:
-                        self.last_frame = frame_number
-                        
-                        # Trigger event
-                        event_data = {
-                            'frame_number': frame_number,
-                            'trigger': True,
-                            'universe': self.universe,
-                            'timestamp': time.time()
-                        }
-                        
-                        # Emit event to connected modules
-                        self.emit_event(event_data)
-                        
-                        # Log frame change
-                        self.log_message(f"🎬 Frame: {frame_number} (Universe {self.universe})")
+        try:
+            universe = packet.universe
+            dmx_data = packet.dmxData
+            
+            # Extract frame number from channels 1 and 2
+            frame_number = self._extract_frame_number(dmx_data)
+            
+            # Update current frame
+            with self.frame_lock:
+                self.current_frame = frame_number
+            
+            # Check if frame number changed
+            if frame_number != self.last_frame:
+                self.last_frame = frame_number
                 
-                # Small sleep to prevent busy waiting
-                time.sleep(0.001)  # 1ms sleep for high performance
+                # Trigger event
+                event_data = {
+                    'frame_number': frame_number,
+                    'trigger': True,
+                    'universe': universe,
+                    'timestamp': time.time()
+                }
                 
-            except Exception as e:
-                self.log_message(f"❌ Error in sACN receiver loop: {e}")
-                time.sleep(0.1)  # Longer sleep on error
+                # Emit event to connected modules
+                self.emit_event(event_data)
+                
+                # Log frame change
+                self.log_message(f"🎬 Frame: {frame_number} (Universe {universe})")
+                
+        except Exception as e:
+            self.log_message(f"❌ Error in DMX data callback: {e}")
     
     def _extract_frame_number(self, dmx_data) -> int:
         """
@@ -206,8 +206,10 @@ class SACNFramesInputModule(ModuleBase):
             Dict[str, Any]: Display data including current frame number
         """
         with self.frame_lock:
+            # Show "No frame received" when no frames have been received yet
+            frame_display = "No frame received" if self.current_frame == 0 else str(self.current_frame)
             return {
-                'frame_number': str(self.current_frame),
+                'frame_number': frame_display,
                 'status': "Connected" if self.is_running else "Disconnected"
             }
     
@@ -245,6 +247,15 @@ class SACNFramesInputModule(ModuleBase):
             "universe": self.universe,
             "current_frame": self.current_frame
         }
+    
+    def set_event_callback(self, callback):
+        """
+        Set the event callback function for compatibility with GUI.
+        
+        Args:
+            callback: Function to call when events are emitted
+        """
+        self.add_event_callback(callback)
     
     def auto_configure(self):
         """

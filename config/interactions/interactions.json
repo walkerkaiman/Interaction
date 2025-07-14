@@ -2,15 +2,15 @@
   "interactions": [
     {
       "input": {
-        "module": "serial_input_trigger",
+        "module": "sacn_frames_input_trigger",
         "config": {}
       },
       "output": {
         "module": "osc_output_trigger",
         "config": {
           "ip_address": "127.0.0.1",
-          "port": "9000",
-          "osc_address": "/data"
+          "port": "8000",
+          "osc_address": "/d"
         }
       }
     }
