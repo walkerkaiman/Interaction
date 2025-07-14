@@ -8,8 +8,8 @@
     {
       "name": "ip_address",
       "type": "label",
-      "label": "All Interfaces",
-      "default": "0.0.0.0 (All Interfaces)"
+      "label": "IP Address",
+      "default": "0.0.0.0"
     },
     {
       "name": "port",

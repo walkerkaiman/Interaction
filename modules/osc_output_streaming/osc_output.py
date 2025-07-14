@@ -113,30 +113,34 @@ class OSCOutputModule(ModuleBase):
                 value = data.get('value', str(data))
             else:
                 value = str(data)
-            
-            # Strip whitespace
-            value = value.strip()
-            
-            if not value:
+            # Only call .strip() if value is a string
+            if isinstance(value, str):
+                value = value.strip()
+            else:
+                # If not a string, leave as is (int, float, etc.)
+                pass
+            if value == '' or value is None:
                 return None, "empty"
-            
-            # Check if it's a float (contains decimal point)
-            if '.' in value:
+            # Check if it's a float (contains decimal point and is string)
+            if isinstance(value, str) and '.' in value:
                 try:
                     float_val = float(value)
                     return float_val, "float"
                 except ValueError:
-                    # If float conversion fails, return as string
                     return value, "string"
-            
-            # Check if it's an integer
-            try:
-                int_val = int(value)
-                return int_val, "integer"
-            except ValueError:
-                # If integer conversion fails, return as string
-                return value, "string"
-                
+            # Check if it's an integer (if string or already int)
+            if isinstance(value, str):
+                try:
+                    int_val = int(value)
+                    return int_val, "integer"
+                except ValueError:
+                    return value, "string"
+            elif isinstance(value, int):
+                return value, "integer"
+            elif isinstance(value, float):
+                return value, "float"
+            else:
+                return value, type(value).__name__  # fallback
         except Exception as e:
             self.log_message(f"⚠️ Error parsing value '{data}': {e}")
             return str(data), "string"
@@ -144,8 +148,10 @@ class OSCOutputModule(ModuleBase):
     def handle_event(self, data):
         """Handle incoming events and send OSC messages"""
         try:
+            self.log_message(f"[DEBUG] handle_event called with data: {data}")
             # Parse the incoming data
             value, value_type = self._parse_value(data)
+            self.log_message(f"[DEBUG] Parsed value: {value} (type: {value_type})")
             
             if value is None:
                 self.log_message("⚠️ Received empty data, skipping OSC send")
@@ -158,6 +164,7 @@ class OSCOutputModule(ModuleBase):
             # Send OSC message
             if self.osc_client:
                 try:
+                    self.log_message(f"[DEBUG] Sending OSC message: {self.osc_address} = {value}")
                     self.osc_client.send_message(self.osc_address, value)
                     self.log_message(f"OSC Sent: {self.osc_address} = {value}")
                     # Use the proper logging callback for OSC messages

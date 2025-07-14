@@ -118,35 +118,11 @@ class ModuleBase:
     
     def emit_event(self, data: Dict[str, Any]):
         """
-        Emit an event to all connected modules.
-        
-        This method is used by input modules to send events to output modules.
-        The event data can contain any information that the output module needs
-        to generate its response.
-        
-        Args:
-            data (Dict[str, Any]): Event data dictionary containing the event information
-            
-        Note: The event system is the primary mechanism for communication between
-        modules. Input modules emit events when they receive triggers, and output
-        modules receive these events and generate responses. The message router
-        handles the actual routing of events between modules.
-        
-        Example:
-            # Emit a simple trigger event
-            self.emit_event({"trigger": 0.75})
-            
-            # Emit a complex event with multiple fields
-            self.emit_event({
-                "address": "/trigger",
-                "args": ["value"],
-                "trigger": 0.75,
-                "timestamp": time.time()
-            })
+        Emit an event to all registered callbacks.
         """
         module_name = self.manifest.get('name', 'Unknown Module')
         self.log_message(f"{module_name} emitting event: {data}")
-        
+        self.log_message(f"[DEBUG] emit_event: Instance {id(self)} ({module_name}) callbacks: {[str(cb) for cb in self._event_callbacks]}")
         # Call all registered event callbacks
         for callback in self._event_callbacks:
             try:
@@ -182,37 +158,23 @@ class ModuleBase:
     def add_event_callback(self, callback: Callable):
         """
         Add a callback function to be called when events are emitted.
-        
         This method is used internally by the message router to connect
         modules together. When an input module emits an event, all registered
         callbacks are called with the event data.
-        
-        Args:
-            callback (Callable): Function to call when events are emitted
-            
-        Note: This is part of the internal event routing system. Most modules
-        don't need to call this method directly - it's handled by the message
-        router when modules are connected.
         """
-        if callback not in self._event_callbacks:
+        module_name = self.manifest.get('name', 'Unknown Module')
+        self.log_message(f"[DEBUG] add_event_callback: Adding callback {callback} to instance {id(self)} ({module_name})")
+        if callback is not None:
             self._event_callbacks.append(callback)
-    
+            self.log_message(f"[DEBUG] add_event_callback: Callback list now: {[str(cb) for cb in self._event_callbacks]}")
+        else:
+            self.log_message(f"[DEBUG] add_event_callback: Ignored None callback for instance {id(self)} ({module_name})")
+
     def remove_event_callback(self, callback: Callable):
         """
         Remove a callback function from the event callback list.
-        
-        This method is used internally by the message router to disconnect
-        modules. When a module is removed or reconfigured, its callbacks
-        are removed to prevent memory leaks.
-        
-        Args:
-            callback (Callable): Function to remove from the callback list
-            
-        Note: This is part of the internal event routing system. Most modules
-        don't need to call this method directly - it's handled by the message
-        router when modules are disconnected.
         """
-        if callback in self._event_callbacks:
+        if callback is not None and callback in self._event_callbacks:
             self._event_callbacks.remove(callback)
     
     def log_message(self, message: str):

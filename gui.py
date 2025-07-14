@@ -9,6 +9,7 @@ import threading
 from PIL import Image, ImageTk
 from modules.audio_output_trigger.audio_output import AudioOutputModule
 from module_loader import input_event_router
+from module_loader import create_and_start_module
 
 # Logging system with different verbosity levels
 class LogLevel:
@@ -230,84 +231,106 @@ class InteractionBlock:
                 log_callback = self.logger.osc
             else:
                 log_callback = self.logger.verbose
-            
-            self.input_instance = self.loader.create_module_instance(
+
+            # Define the event callback for each input module type
+            block_event_callback = lambda data: None
+            if input_module == "serial_input_trigger":
+                def block_event_callback(data):
+                    if data.get('trigger', False):
+                        self.logger.verbose(f"🎯 Serial trigger event received: {data}")
+                    current_value_label = self.input_config_fields.get('current_value')
+                    if current_value_label and current_value_label.winfo_exists():
+                        value = data.get('value', 'No data')
+                        self.frame.after(0, lambda: current_value_label.config(text=f"Value: {value}") if current_value_label.winfo_exists() else None)
+                    if data.get('trigger', False):
+                        self.logger.verbose(f"🎯 Serial trigger: Processing trigger event")
+                        if self.output_instance:
+                            if hasattr(self.output_instance, "update_config"):
+                                self.output_instance.update_config(self.get_output_config())
+                            if hasattr(self.output_instance, "set_cursor_callback"):
+                                self.output_instance.set_cursor_callback(self.start_audio_playback)
+                            if hasattr(self.output_instance, "start"):
+                                self.output_instance.start()
+                            self.output_instance.handle_event(data)
+                            self.logger.verbose(f"🎯 Serial trigger: Sent event to output module")
+                        else:
+                            self.logger.verbose(f"⚠️ Serial Trigger: No output instance to send event to")
+            elif input_module == "sacn_frames_input_trigger":
+                def block_event_callback(data):
+                    self.logger.verbose(f"🎬 sACN frame event received: {data}")
+                    frame_number_label = self.input_config_fields.get('frame_number')
+                    if frame_number_label and self.input_instance:
+                        frame_number = data.get('frame_number', 0)
+                        self.frame.after(0, lambda: frame_number_label.config(text=f"Frame Number: {frame_number}") if frame_number_label.winfo_exists() else None)
+                    if data.get('trigger', False):
+                        self.logger.verbose(f"🎬 sACN: Processing trigger event")
+                        if self.output_instance:
+                            if hasattr(self.output_instance, "update_config"):
+                                self.output_instance.update_config(self.get_output_config())
+                            if hasattr(self.output_instance, "set_cursor_callback"):
+                                self.output_instance.set_cursor_callback(self.start_audio_playback)
+                            if hasattr(self.output_instance, "start"):
+                                self.output_instance.start()
+                            self.output_instance.handle_event(data)
+                            self.logger.verbose(f"🎬 sACN: Sent event to output module")
+                        else:
+                            self.logger.verbose(f"⚠️ sACN: No output instance to send event to")
+                    else:
+                        self.logger.verbose(f"🎬 sACN: Non-trigger event (GUI update only)")
+            elif input_module == "serial_input_streaming":
+                def block_event_callback(data):
+                    self.logger.verbose(f"📡 Serial event received: {data}")
+                    incoming_data_label = self.input_config_fields.get('incoming_data')
+                    if incoming_data_label:
+                        value = data.get('value', 'No data received')
+                        incoming_data_label.config(text=f"Incoming Data: {value}")
+                    if self.output_instance:
+                        if hasattr(self.output_instance, "update_config"):
+                            self.output_instance.update_config(self.get_output_config())
+                        if hasattr(self.output_instance, "set_cursor_callback"):
+                            self.output_instance.set_cursor_callback(self.start_audio_playback)
+                        if hasattr(self.output_instance, "start"):
+                            self.output_instance.start()
+                        self.output_instance.handle_event(data)
+                    else:
+                        self.logger.verbose(f"⚠️ Serial: No output instance to send event to")
+            elif input_module == "frames_input_streaming":
+                def block_event_callback(data):
+                    self.logger.verbose(f"📡 frames_input_streaming event received: {data}")
+                    frame_number_label = self.input_config_fields.get('frame_number')
+                    if frame_number_label:
+                        value = data.get('value', 'No frame received')
+                        self.logger.verbose(f"[DEBUG] Updating frame number label to: {value}")
+                        self.frame.after(0, lambda: frame_number_label.config(text=f"Frame Number: {value}") if frame_number_label.winfo_exists() else None)
+                    if self.output_instance:
+                        if hasattr(self.output_instance, "update_config"):
+                            self.output_instance.update_config(self.get_output_config())
+                        if hasattr(self.output_instance, "set_cursor_callback"):
+                            self.output_instance.set_cursor_callback(self.start_audio_playback)
+                        if hasattr(self.output_instance, "start"):
+                            self.output_instance.start()
+                        self.logger.verbose(f"[DEBUG] Calling handle_event on output_instance with data: {data}")
+                        self.output_instance.handle_event(data)
+                        self.logger.verbose(f"[DEBUG] Sent event to output module")
+                    else:
+                        self.logger.verbose(f"[DEBUG] No output instance to send event to")
+            else:
+                block_event_callback = lambda data: None
+
+            self.input_instance = create_and_start_module(
+                self.loader,
                 input_module,
                 self.get_input_config(),
+                event_callback=block_event_callback,
                 log_callback=log_callback
             )
-            if self.input_instance:
-                # Add event callback for serial_input_trigger
-                if input_module == "serial_input_trigger":
-                    def block_event_callback(data):
-                        # Only log trigger events, not every value
-                        if data.get('trigger', False):
-                            self.logger.verbose(f"🎯 Serial trigger event received: {data}")
-                        # Update the current value label immediately, thread-safe
-                        current_value_label = self.input_config_fields.get('current_value')
-                        if current_value_label and current_value_label.winfo_exists():
-                            value = data.get('value', 'No data')
-                            self.frame.after(0, lambda: current_value_label.config(text=f"Value: {value}") if current_value_label.winfo_exists() else None)
-                        # Send actual triggers to the output module
-                        if data.get('trigger', False):
-                            self.logger.verbose(f"🎯 Serial trigger: Processing trigger event")
-                            if self.output_instance:
-                                if hasattr(self.output_instance, "update_config"):
-                                    self.output_instance.update_config(self.get_output_config())
-                                if hasattr(self.output_instance, "set_cursor_callback"):
-                                    self.output_instance.set_cursor_callback(self.start_audio_playback)
-                                if hasattr(self.output_instance, "start"):
-                                    self.output_instance.start()
-                                self.output_instance.handle_event(data)
-                                self.logger.verbose(f"🎯 Serial trigger: Sent event to output module")
-                            else:
-                                self.logger.verbose(f"⚠️ Serial Trigger: No output instance to send event to")
-                    self.input_instance.add_event_callback(block_event_callback)
-                    self.logger.verbose(f"🔗 Serial Trigger: Added event callback to module")
-                # Add event callback for sacn_frames_input_trigger
-                elif input_module == "sacn_frames_input_trigger":
-                    def block_event_callback(data):
-                        self.logger.verbose(f"🎬 sACN frame event received: {data}")
-                        # Update the frame number label immediately, thread-safe
-                        frame_number_label = self.input_config_fields.get('frame_number')
-                        if frame_number_label and self.input_instance:
-                            frame_number = data.get('frame_number', 0)
-                            self.frame.after(0, lambda: frame_number_label.config(text=f"Frame Number: {frame_number}") if frame_number_label.winfo_exists() else None)
-                        
-                        # Send triggers to the output module
-                        if data.get('trigger', False):
-                            self.logger.verbose(f"🎬 sACN: Processing trigger event")
-                            # Direct connection to output module for sACN Frames
-                            if self.output_instance:
-                                # Update output instance with current config
-                                if hasattr(self.output_instance, "update_config"):
-                                    self.output_instance.update_config(self.get_output_config())
-                                # Ensure cursor callback is set
-                                if hasattr(self.output_instance, "set_cursor_callback"):
-                                    self.output_instance.set_cursor_callback(self.start_audio_playback)
-                                # Ensure output instance is started
-                                if hasattr(self.output_instance, "start"):
-                                    self.output_instance.start()
-                                # Send event to output
-                                self.output_instance.handle_event(data)
-                                self.logger.verbose(f"🎬 sACN: Sent event to output module")
-                            else:
-                                self.logger.verbose(f"⚠️ sACN: No output instance to send event to")
-                        else:
-                            self.logger.verbose(f"🎬 sACN: Non-trigger event (GUI update only)")
-                    self.input_instance.add_event_callback(block_event_callback)
-                    self.logger.verbose(f"🔗 sACN Frames: Added event callback to module")
-                
-                self.input_instance.start()
-                # Special handling for Clock module - start display update
-                if input_module == "clock_input_trigger":
-                    self.start_clock_display_update()
-                # Special handling for Serial Trigger module - start display update
-                elif input_module == "serial_input_trigger":
-                    self.start_serial_trigger_display_update()
-                # Special handling for sACN Frames module - start display update
-                elif input_module == "sacn_frames_input_trigger":
-                    self.start_sacn_frames_display_update()
+            # Special handling for Clock module - start display update
+            if input_module == "clock_input_trigger":
+                self.start_clock_display_update()
+            elif input_module == "serial_input_trigger":
+                self.start_serial_trigger_display_update()
+            elif input_module == "sacn_frames_input_trigger":
+                self.start_sacn_frames_display_update()
         else:
             self.logger.verbose(f"⚠️ Invalid input module: '{input_module}'")
         # Populate output fields
@@ -355,6 +378,8 @@ class InteractionBlock:
             self.logger.verbose(f"⚠️ Invalid output module: '{output_module}'")
         # Remove preset reference
         self.preset = None
+        # Start both input and output modules after both are created
+        self.start_modules()
 
     def is_valid(self):
         return bool(self.input_var.get() and self.output_var.get())
@@ -478,6 +503,48 @@ class InteractionBlock:
         # Start updating display for sACN Frames module
         elif self.input_var.get() == "sacn_frames_input_trigger":
             self.start_sacn_frames_display_update()
+        # No periodic update for frames_input_streaming; handled by event callback
+        elif self.input_var.get() == "frames_input_streaming":
+            module_name = self.input_var.get()
+            config = self.get_input_config()
+            # Handle frames_input_streaming input module
+            def block_event_callback(data):
+                self.logger.verbose(f"📡 frames_input_streaming event received: {data}")
+                frame_number_label = self.input_config_fields.get('frame_number')
+                if frame_number_label:
+                    value = data.get('value', 'No frame received')
+                    self.logger.verbose(f"[DEBUG] Updating frame number label to: {value}")
+                    self.frame.after(0, lambda: frame_number_label.config(text=f"Frame Number: {value}") if frame_number_label.winfo_exists() else None)
+                if self.output_instance:
+                    self.logger.verbose(f"[DEBUG] output_instance is: {self.output_instance} (type: {type(self.output_instance)})")
+                    if hasattr(self.output_instance, "update_config"):
+                        self.logger.verbose(f"[DEBUG] Calling update_config on output_instance")
+                        self.output_instance.update_config(self.get_output_config())
+                    if hasattr(self.output_instance, "set_cursor_callback"):
+                        self.logger.verbose(f"[DEBUG] Setting cursor callback on output_instance")
+                        self.output_instance.set_cursor_callback(self.start_audio_playback)
+                    if hasattr(self.output_instance, "start"):
+                        self.logger.verbose(f"[DEBUG] Starting output_instance")
+                        self.output_instance.start()
+                    self.logger.verbose(f"[DEBUG] Calling handle_event on output_instance with data: {data}")
+                    self.output_instance.handle_event(data)
+                    self.logger.verbose(f"[DEBUG] Called handle_event on output_instance")
+                else:
+                    self.logger.verbose(f"⚠️ frames_input_streaming: No output instance to send event to")
+            try:
+                # Always create, add callback, and start in this order
+                self.input_instance = self.loader.create_module_instance(
+                    module_name,
+                    config,
+                    log_callback=self.logger.verbose
+                )
+                self.input_instance.add_event_callback(block_event_callback)
+                self.logger.verbose(f"🔗 frames_input_streaming: Added event callback to module (id: {id(self.input_instance)})")
+                self.logger.verbose(f"[DEBUG] input_instance id: {id(self.input_instance)} before start")
+                self.input_instance.start()
+                self.logger.verbose(f"🚀 frames_input_streaming: Module started (id: {id(self.input_instance)})")
+            except Exception as e:
+                self.logger.verbose(f"⚠️ Failed to create frames_input_streaming input instance: {e}")
 
     def start_clock_display_update(self):
         """Start periodic updates for Clock module display."""
@@ -588,6 +655,9 @@ class InteractionBlock:
 
     def remove_self(self):
         self.cursor_running = False
+        if hasattr(self, 'cursor_thread') and self.cursor_thread:
+            self.cursor_thread.join(timeout=1)
+            self.cursor_thread = None
         # Unregister input event callback if any
         if self.input_event_key and self.input_event_callback:
             input_event_router.unregister(*self.input_event_key, self.input_event_callback)
@@ -926,6 +996,7 @@ class InteractionBlock:
             if self.input_instance and hasattr(self.input_instance, "stop"):
                 self.logger.verbose("🛑 Stopping existing input instance...")
                 self.input_instance.stop()
+                self.logger.verbose(f"[DEBUG] input_instance stopped and set to None (was: {self.input_instance})")
                 self.input_instance = None
             # Create or reuse shared input instance
             module_name = self.input_var.get()
@@ -1154,6 +1225,45 @@ class InteractionBlock:
                     self.start_sacn_frames_display_update()
                 except Exception as e:
                     self.logger.verbose(f"⚠️ Failed to create sACN frames input instance: {e}")
+            elif module_name == "frames_input_streaming":
+                # Handle frames_input_streaming input module
+                def block_event_callback(data):
+                    self.logger.verbose(f"📡 frames_input_streaming event received: {data}")
+                    frame_number_label = self.input_config_fields.get('frame_number')
+                    if frame_number_label:
+                        value = data.get('value', 'No frame received')
+                        self.logger.verbose(f"[DEBUG] Updating frame number label to: {value}")
+                        self.frame.after(0, lambda: frame_number_label.config(text=f"Frame Number: {value}") if frame_number_label.winfo_exists() else None)
+                    if self.output_instance:
+                        self.logger.verbose(f"[DEBUG] output_instance is: {self.output_instance} (type: {type(self.output_instance)})")
+                        if hasattr(self.output_instance, "update_config"):
+                            self.logger.verbose(f"[DEBUG] Calling update_config on output_instance")
+                            self.output_instance.update_config(self.get_output_config())
+                        if hasattr(self.output_instance, "set_cursor_callback"):
+                            self.logger.verbose(f"[DEBUG] Setting cursor callback on output_instance")
+                            self.output_instance.set_cursor_callback(self.start_audio_playback)
+                        if hasattr(self.output_instance, "start"):
+                            self.logger.verbose(f"[DEBUG] Starting output_instance")
+                            self.output_instance.start()
+                        self.logger.verbose(f"[DEBUG] Calling handle_event on output_instance with data: {data}")
+                        self.output_instance.handle_event(data)
+                        self.logger.verbose(f"[DEBUG] Called handle_event on output_instance")
+                    else:
+                        self.logger.verbose(f"⚠️ frames_input_streaming: No output instance to send event to")
+                try:
+                    # Always create, add callback, and start in this order
+                    self.input_instance = self.loader.create_module_instance(
+                        module_name,
+                        config,
+                        log_callback=self.logger.verbose
+                    )
+                    self.input_instance.add_event_callback(block_event_callback)
+                    self.logger.verbose(f"🔗 frames_input_streaming: Added event callback to module (id: {id(self.input_instance)})")
+                    self.logger.verbose(f"[DEBUG] input_instance id: {id(self.input_instance)} before start")
+                    self.input_instance.start()
+                    self.logger.verbose(f"🚀 frames_input_streaming: Module started (id: {id(self.input_instance)})")
+                except Exception as e:
+                    self.logger.verbose(f"⚠️ Failed to create frames_input_streaming input instance: {e}")
             else:
                 try:
                     self.input_instance = self.loader.create_module_instance(
@@ -1339,14 +1449,16 @@ class InteractionBlock:
     def draw_output_fields(self, event=None):
         for widget in self.output_fields_container.winfo_children():
             widget.destroy()
+
         module_name = self.output_var.get()
         manifest = self.loader.load_manifest(module_name)
         if manifest is None:
             # handle error or skip
             return
+
         fields = manifest.get("fields", [])
+
         self.output_config_fields = {}
-        waveform_label_ref = None
         for field in fields:
             if field["type"] == "button":
                 action = field.get("action", field["name"])
@@ -1448,173 +1560,40 @@ class InteractionBlock:
                 entry.bind("<FocusOut>", on_osc_address_change)
                 entry.bind("<Return>", on_osc_address_change)
 
-        # Stop any existing output instance before creating a new one
-        if self.output_instance and hasattr(self.output_instance, "stop"):
-            self.logger.verbose("🛑 Stopping existing output instance...")
-            self.output_instance.stop()
-        # Create output instance
-        try:
-            # Use appropriate logging method based on module type
-            if module_name == "osc_output_trigger" or module_name == "osc_output_streaming":
-                log_callback = self.logger.osc
-            else:
-                log_callback = self.logger.verbose
-            
-            self.output_instance = self.loader.create_module_instance(
-                module_name,
-                self.get_output_config(),
-                log_callback=log_callback
-            )
-            # Set log level for the new module
-            if hasattr(self.output_instance, 'log_level'):
-                self.output_instance.log_level = 'info'
-            
-            # Set up cursor callback for audio output
-            if hasattr(self.output_instance, 'set_cursor_callback'):
-                self.output_instance.set_cursor_callback(self.start_audio_playback)
-            
-            # Special handling for Clock modules - re-register event callback
-            if self.input_var.get() == "clock_input_trigger" and self.input_instance:
-                def block_event_callback(data):
-                    self.logger.verbose(f"🔔 Clock event received: {data}")
-                    # Direct connection to output module for Clock
-                    if self.logger.level == "verbose":
-                        self.logger.verbose(f"🔍 Clock: Checking output_instance - {self.output_instance}")
-                    if self.output_instance:
-                        if self.logger.level == "verbose":
-                            self.logger.verbose(f"🔍 Clock: Output instance type: {type(self.output_instance)}")
-                        # Update output instance with current config
-                        if hasattr(self.output_instance, "update_config"):
-                            if self.logger.level == "verbose":
-                                self.logger.verbose(f"🔍 Clock: Updating output config")
-                            self.output_instance.update_config(self.get_output_config())
-                        # Ensure cursor callback is set
-                        if hasattr(self.output_instance, "set_cursor_callback"):
-                            if self.logger.level == "verbose":
-                                self.logger.verbose(f"🔍 Clock: Setting cursor callback")
-                            self.output_instance.set_cursor_callback(self.start_audio_playback)
-                        # Ensure output instance is started
-                        if hasattr(self.output_instance, "start"):
-                            if self.logger.level == "verbose":
-                                self.logger.verbose(f"🔍 Clock: Starting output instance")
-                            self.output_instance.start()
-                        # Send event to output
-                        if self.logger.level == "verbose":
-                            self.logger.verbose(f"📤 Clock: Calling output_instance.handle_event(data)")
-                        self.output_instance.handle_event(data)
-                        if self.logger.level == "verbose":
-                            self.logger.verbose(f"✅ Clock: handle_event call completed")
-                    else:
-                        if self.logger.level == "verbose":
-                            self.logger.verbose(f"⚠️ Clock: No output instance to send event to")
-                
-                # Clear existing callbacks and add the new one
-                self.input_instance._event_callbacks.clear()
-                self.input_instance.add_event_callback(block_event_callback)
-                if self.logger.level == "verbose":
-                    self.logger.verbose(f"🔗 Clock: Re-registered event callback after output change")
-                            # Special handling for Serial modules - re-register event callback
-                elif self.input_var.get() == "serial_input_streaming" and self.input_instance:
-                    def block_event_callback(data):
-                        self.logger.verbose(f"📡 Serial event received: {data}")
-                        # Update the incoming data label immediately
-                        incoming_data_label = self.input_config_fields.get('incoming_data')
-                        if incoming_data_label:
-                            value = data.get('value', 'No data received')
-                            incoming_data_label.config(text=f"Incoming Data: {value}")
-                        # Direct connection to output module for Serial
-                        if self.output_instance:
-                            # Update output instance with current config
-                            if hasattr(self.output_instance, "update_config"):
-                                self.output_instance.update_config(self.get_output_config())
-                            # Ensure cursor callback is set
-                            if hasattr(self.output_instance, "set_cursor_callback"):
-                                self.output_instance.set_cursor_callback(self.start_audio_playback)
-                            # Ensure output instance is started
-                            if hasattr(self.output_instance, "start"):
-                                self.output_instance.start()
-                            # Send event to output
-                            self.output_instance.handle_event(data)
-                        else:
-                            self.logger.verbose(f"⚠️ Serial: No output instance to send event to")
-                    
-                    # Clear existing callbacks and add the new one
-                    self.input_instance._event_callbacks.clear()
-                    self.input_instance.add_event_callback(block_event_callback)
-                    if self.logger.level == "verbose":
-                        self.logger.verbose(f"🔗 Serial: Re-registered event callback after output change")
-                # Special handling for Serial Trigger modules - re-register event callback
-                elif self.input_var.get() == "serial_input_trigger" and self.input_instance:
-                    def block_event_callback(data):
-                        self.logger.verbose(f"🎯 Serial trigger event received: {data}")
-                        # Update the current value label immediately, thread-safe
-                        current_value_label = self.input_config_fields.get('current_value')
-                        if current_value_label and self.input_instance:
-                            value = data.get('value', 'No data')
-                            self.frame.after(0, lambda: current_value_label.config(text=f"Value: {value}") if current_value_label.winfo_exists() else None)
-                        # Direct connection to output module for Serial Trigger
-                        if self.output_instance:
-                            # Update output instance with current config
-                            if hasattr(self.output_instance, "update_config"):
-                                self.output_instance.update_config(self.get_output_config())
-                            # Ensure cursor callback is set
-                            if hasattr(self.output_instance, "set_cursor_callback"):
-                                self.output_instance.set_cursor_callback(self.start_audio_playback)
-                            # Ensure output instance is started
-                            if hasattr(self.output_instance, "start"):
-                                self.output_instance.start()
-                            # Send event to output
-                            self.output_instance.handle_event(data)
-                        else:
-                            self.logger.verbose(f"⚠️ Serial Trigger: No output instance to send event to")
-                    
-                                    # Clear existing callbacks and add the new one
-                self.input_instance._event_callbacks.clear()
-                self.input_instance.add_event_callback(block_event_callback)
-                if self.logger.level == "verbose":
-                    self.logger.verbose(f"🔗 Serial Trigger: Re-registered event callback after output change")
-                # Special handling for sACN Frames modules - re-register event callback
-                elif self.input_var.get() == "sacn_frames_input_trigger" and self.input_instance:
-                    def block_event_callback(data):
-                        self.logger.verbose(f"🎬 sACN frame event received: {data}")
-                        # Update the frame number label immediately, thread-safe
-                        frame_number_label = self.input_config_fields.get('frame_number')
-                        if frame_number_label:
-                            frame_number = data.get('frame_number', 'No frame')
-                            self.frame.after(0, lambda: frame_number_label.config(text=str(frame_number)) if frame_number_label.winfo_exists() else None)
-                        # Direct connection to output module for sACN Frames
-                        if self.output_instance:
-                            # Update output instance with current config
-                            if hasattr(self.output_instance, "update_config"):
-                                self.output_instance.update_config(self.get_output_config())
-                            # Ensure cursor callback is set
-                            if hasattr(self.output_instance, "set_cursor_callback"):
-                                self.output_instance.set_cursor_callback(self.start_audio_playback)
-                            # Ensure output instance is started
-                            if hasattr(self.output_instance, "start"):
-                                self.output_instance.start()
-                            # Send event to output
-                            self.output_instance.handle_event(data)
-                        else:
-                            self.logger.verbose(f"⚠️ sACN Frames: No output instance to send event to")
-                    
-                    # Clear existing callbacks and add the new one
-                    self.input_instance._event_callbacks.clear()
-                    self.input_instance.add_event_callback(block_event_callback)
-                    if self.logger.level == "verbose":
-                        self.logger.verbose(f"🔗 sACN Frames: Re-registered event callback after output change")
-            else:
-                # For other modules, use the standard connect_modules
-                self.connect_modules()
-            
-            # Set the waveform label using the persistent instance
-            if waveform_label_ref and self.output_instance and hasattr(self.output_instance, "get_waveform_label"):
-                waveform_label_ref.config(text=self.output_instance.get_waveform_label())
-            # Refresh waveform on startup
-            self.logger.verbose("✅ Refreshing waveform on startup...")
-            self.refresh_output_module_and_waveform()
-        except Exception as e:
-            self.logger.verbose(f"⚠️ Failed to create output instance: {e}")
+        # Only create a new output instance if it doesn't exist or settings have changed
+        new_config = self.get_output_config()
+        needs_new_instance = (
+            not self.output_instance or
+            getattr(self.output_instance, 'config', None) != new_config or
+            getattr(self.output_instance, 'manifest', None) != manifest
+        )
+        if needs_new_instance:
+            # Stop any existing output instance before creating a new one
+            if self.output_instance and hasattr(self.output_instance, 'stop'):
+                self.logger.verbose("🛑 Stopping existing output instance...")
+                self.output_instance.stop()
+            # Create output instance
+            try:
+                # Use appropriate logging method based on module type
+                if module_name == "osc_output_trigger" or module_name == "osc_output_streaming":
+                    log_callback = self.logger.osc
+                else:
+                    log_callback = self.logger.verbose
+                self.output_instance = create_and_start_module(
+                    self.loader,
+                    module_name,
+                    new_config,
+                    event_callback=lambda data: None,  # Output modules don't need event callbacks
+                    log_callback=log_callback
+                )
+                # Set log level for the new module
+                if hasattr(self.output_instance, 'log_level'):
+                    self.output_instance.log_level = 'info'
+                # Set up cursor callback for audio output
+                if hasattr(self.output_instance, 'set_cursor_callback'):
+                    self.output_instance.set_cursor_callback(self.start_audio_playback)
+            except Exception as e:
+                self.logger.verbose(f"⚠️ Failed to create output instance: {e}")
 
     def refresh_output_module_and_waveform(self):
         """Restore waveform rendering and keep cursor animation."""
@@ -1780,47 +1759,33 @@ class InteractionBlock:
                         field.delete(0, tk.END)
                         field.insert(0, v)
                     elif isinstance(field, tk.StringVar):
+                        # Handle StringVar widgets (like dropdowns)
                         field.set(v)
-                    self.logger.verbose(f"🔧 Loaded {k} = {v} for {input_module}")
+                    elif isinstance(field, dict) and "var" in field:
+                        # Handle sliders
+                        field["var"].set(v)
+                    elif isinstance(field, dict) and "waveform" in field:
+                        # Handle waveform fields (no value to set)
+                        pass
+                    else:
+                        # Handle other field types
+                        self.logger.verbose(f"⚠️ Unknown field type for {k}: {type(field)}")
             
-            # Now create instance with the populated config values
-            config = self.get_input_config()
-            self.logger.verbose(f"🔧 Creating {input_module} instance with config: {config}")
-            self.input_instance = self.loader.create_module_instance(
-                input_module,
-                config,
+            self.output_instance = self.loader.create_module_instance(
+                output_module,
+                self.get_output_config(),
                 log_callback=self.logger.verbose
             )
-            if self.input_instance:
-                self.input_instance.start()
-                # Special handling for Clock module - start display update
-                if input_module == "clock_input_trigger":
-                    # Add event callback for Clock module
-                    def block_event_callback(data):
-                        self.connect_modules()
-                        if self.output_instance:
-                            self.output_instance.handle_event(data)
-                    self.input_instance.add_event_callback(block_event_callback)
-                    self.start_clock_display_update()
-                elif input_module == "serial_input_streaming":
-                    # Add event callback for Serial module
-                    def block_event_callback(data):
-                        self.connect_modules()
-                        if self.output_instance:
-                            self.output_instance.handle_event(data)
-                    self.input_instance.add_event_callback(block_event_callback)
-                    self.start_serial_display_update()
-                elif input_module == "serial_input_trigger":
-                    # Add event callback for Serial Trigger module
-                    def block_event_callback(data):
-                        self.connect_modules()
-                        if self.output_instance:
-                            self.output_instance.handle_event(data)
-                    self.input_instance.add_event_callback(block_event_callback)
-                    self.start_serial_trigger_display_update()
-                    # Verify the target time was set correctly
-                    if hasattr(self.input_instance, 'target_time'):
-                        self.logger.verbose(f"🔧 Clock module target_time after creation: {self.input_instance.target_time}")
+            
+            # Set up cursor callback for audio output
+            if hasattr(self.output_instance, 'set_cursor_callback'):
+                self.output_instance.set_cursor_callback(self.start_audio_playback)
+            
+            # Connection is handled by draw_output_fields() via connect_modules()
+            
+            # Refresh waveform on startup
+            self.logger.verbose("✅ Refreshing waveform on startup...")
+            self.refresh_output_module_and_waveform()
         else:
             self.logger.verbose(f"⚠️ Invalid input module: '{input_module}'")
 
@@ -1970,6 +1935,15 @@ class InteractionBlock:
         """Legacy method - now handled by cursor thread"""
         pass  # Cursor animation is now handled by the thread
 
+    def start_modules(self):
+        """Start input and output module instances if they exist."""
+        if hasattr(self, 'input_instance') and self.input_instance:
+            if hasattr(self.input_instance, 'start'):
+                self.input_instance.start()
+        if hasattr(self, 'output_instance') and self.output_instance:
+            if hasattr(self.output_instance, 'start'):
+                self.output_instance.start()
+
 class InteractionGUI:
     # Shared registry for OSC input modules: (port, address) -> OSCInputModule instance
     osc_input_registry = {}
@@ -2010,6 +1984,9 @@ class InteractionGUI:
 
         # Load saved interactions
         self.load_config()
+        # Start all modules after config and GUI are loaded
+        for block in self.blocks:
+            block.start_modules()
 
         self.installation_label = None
 
@@ -2239,20 +2216,24 @@ class InteractionGUI:
         """Clean up resources before shutdown"""
         self.log("🛑 Shutting down OSC servers...", LogLevel.VERBOSE)
         osc_manager.shutdown_all()
-        
         # Stop all blocks
         for block in self.blocks:
+            block.cursor_running = False
+            if hasattr(block, 'cursor_thread') and block.cursor_thread:
+                block.cursor_thread.join(timeout=1)
+                block.cursor_thread = None
             if hasattr(block, 'input_instance') and block.input_instance:
                 if hasattr(block.input_instance, 'stop'):
                     block.input_instance.stop()
             if hasattr(block, 'output_instance') and block.output_instance:
                 if hasattr(block.output_instance, 'stop'):
                     block.output_instance.stop()
-        
         self.log("✅ Cleanup completed", LogLevel.VERBOSE)
 
 def launch_gui():
     root = tk.Tk()
+    root.geometry("600x900")  # Set a more compact window width
+    root.resizable(width=False, height=True)  # Disable width resizing, allow height
     app = InteractionGUI(root)
     
     # Set up cleanup on window close

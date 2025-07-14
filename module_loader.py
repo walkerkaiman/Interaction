@@ -528,3 +528,21 @@ class ModuleLoader:
         self.discover_modules()
         print("🔄 Refreshed module discovery cache")
 
+# --- System-level utility for safe module creation and startup ---
+def create_and_start_module(loader, module_name, config, event_callback=None, log_callback=print):
+    """
+    System-level utility to create a module instance, register an event callback, and start the instance.
+    Ensures the callback is always registered to the running instance.
+    Returns the started instance or None on failure.
+    """
+    instance = loader.create_module_instance(module_name, config, log_callback=log_callback)
+    if instance and event_callback:
+        instance.add_event_callback(event_callback)
+        if hasattr(instance, 'log_message'):
+            instance.log_message(f"[SYSTEM] Registered event callback {event_callback} to instance {id(instance)}")
+    if instance:
+        instance.start()
+        if hasattr(instance, 'log_message'):
+            instance.log_message(f"[SYSTEM] Started instance {id(instance)}")
+    return instance
+

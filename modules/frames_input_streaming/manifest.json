@@ -1,0 +1,18 @@
+{
+  "name": "sACN Frames Input Streaming",
+  "description": "Listens for sACN frame numbers on Universe 999 and streams frame numbers as events",
+  "version": "1.0.0",
+  "author": "Interaction Framework Team",
+  "classification": "streaming",
+  "mode": "streaming",
+  "type": "input",
+  "python_file": "frames_input.py",
+  "fields": [
+    {
+      "name": "frame_number",
+      "type": "label",
+      "label": "Frame Number",
+      "default": "No frame received"
+    }
+  ]
+} 
