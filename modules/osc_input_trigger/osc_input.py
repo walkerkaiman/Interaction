@@ -66,8 +66,7 @@ class OSCInputModule(ModuleBase):
     }
     """
     
-    def __init__(self, config: Dict[str, Any], manifest: Dict[str, Any], 
-                 log_callback=print):
+    def __init__(self, config: Dict[str, Any], manifest: Dict[str, Any], log_callback=print, strategy=None):
         """
         Initialize the OSC input module.
         
@@ -79,7 +78,7 @@ class OSCInputModule(ModuleBase):
         Note: The configuration should contain 'port' and 'address' fields
         that specify the UDP port and OSC address pattern to listen for.
         """
-        super().__init__(config, manifest, log_callback)
+        super().__init__(config, manifest, log_callback, strategy=strategy)
         
         # Extract configuration values with defaults
         self.port = config.get("port", 8000)
@@ -189,19 +188,6 @@ class OSCInputModule(ModuleBase):
             self.config['address'] = '/trigger'
             self.log_message("[Auto-configure] Set default OSC address: /trigger")
 
-    def set_event_callback(self, callback):
-        """
-        Register a callback to be called when an OSC event is received.
-        """
-        # Register with the global input event router
-        input_event_router.register("osc_input", {"port": self.port, "address": self.address}, callback)
-
-    def remove_event_callback(self, callback):
-        """
-        Remove a previously registered event callback.
-        """
-        input_event_router.unregister("osc_input", {"port": self.port, "address": self.address}, callback)
-
     def _handle_osc_message(self, address: str, *args):
         """
         Handle incoming OSC messages and convert them to events.
@@ -224,19 +210,14 @@ class OSCInputModule(ModuleBase):
             /volume 0.5 "main"     -> {"trigger": 0.5, "args": [0.5, "main"]}
         """
         try:
-            # Log every received OSC message
             self.log_message(f"📡 OSC message received: {address} {args}")
-            # Create event data from OSC message
-            event = {
-                "address": address,
-                "args": list(args),
-                "trigger": args[0] if args else None,
-                "timestamp": time.time()
-            }
-            
-            # Dispatch to the global input event router
-            input_event_router.dispatch_event("osc_input", {"port": self.port, "address": self.address}, event)
-            
+            # Convert OSC message to event data
+            event_data = {"address": address, "args": args}
+            # If the address matches the configured trigger, emit a trigger event
+            if address == self.address:
+                if args:
+                    event_data["trigger"] = args[0]
+            self.emit_event(event_data)  # Uses EventRouter.publish
         except Exception as e:
             self.log_message(f"❌ Error handling OSC message: {e}")
     

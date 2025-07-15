@@ -316,6 +316,7 @@ class SerialTriggerModule(ModuleBase):
         # Create event data
         event = {
             'value': value,
+            'current_value': value,
             'value_type': value_type,
             'threshold': self.threshold_value,
             'operator': self.logic_operator,
@@ -354,6 +355,7 @@ class SerialTriggerModule(ModuleBase):
         if self.current_value is not None:
             event = {
                 'value': f"{self.current_value:.1f}",
+                'current_value': self.current_value,
                 'value_type': 'float',
                 'threshold': self.threshold_value,
                 'operator': self.logic_operator,

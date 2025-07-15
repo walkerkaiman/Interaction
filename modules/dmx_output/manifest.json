@@ -1,0 +1,80 @@
+{
+  "name": "DMX Output",
+  "type": "output",
+  "classification": "adaptive",
+  "mode": "adaptive",
+  "description": "DMX output module that automatically adapts behavior based on connected input module type. In trigger mode, plays through all frames in the CSV file once at the specified FPS. In streaming mode, sends frames based on input value.",
+  "fields": [
+    {
+      "name": "protocol",
+      "type": "select",
+      "label": "Protocol",
+      "options": [
+        {"label": "sACN (E1.31)", "value": "sacn"},
+        {"label": "Art-Net", "value": "artnet"},
+        {"label": "Serial DMX", "value": "serial"}
+      ],
+      "default": "sacn"
+    },
+    {
+      "name": "csv_file",
+      "type": "file",
+      "label": "DMX CSV File",
+      "default": ""
+    },
+    {
+      "name": "fps",
+      "type": "text",
+      "label": "Chase FPS",
+      "default": "10"
+    },
+    {
+      "name": "universe",
+      "type": "text",
+      "label": "Universe",
+      "default": "1"
+    },
+    {
+      "name": "ip_address",
+      "type": "text",
+      "label": "IP Address",
+      "default": "127.0.0.1"
+    },
+    {
+      "name": "port",
+      "type": "text",
+      "label": "Port",
+      "default": "5568"
+    },
+    {
+      "name": "serial_port",
+      "type": "select",
+      "label": "Serial Port",
+      "options": [],
+      "default": "COM1"
+    },
+    {
+      "name": "net",
+      "type": "text",
+      "label": "Net",
+      "default": "0"
+    },
+    {
+      "name": "subnet",
+      "type": "text",
+      "label": "Subnet",
+      "default": "0"
+    }
+  ],
+  "config_schema": {
+    "protocol": {"type": "string", "default": "sacn", "required": true},
+    "csv_file": {"type": "string", "default": "", "required": false},
+    "fps": {"type": "string", "default": "10", "required": false},
+    "universe": {"type": "string", "default": "1", "required": true},
+    "ip_address": {"type": "string", "default": "127.0.0.1", "required": true},
+    "port": {"type": "string", "default": "5568", "required": true},
+    "serial_port": {"type": "string", "default": "COM1", "required": false},
+    "net": {"type": "string", "default": "0", "required": false},
+    "subnet": {"type": "string", "default": "0", "required": false}
+  }
+} 

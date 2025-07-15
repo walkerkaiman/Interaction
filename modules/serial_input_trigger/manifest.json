@@ -41,8 +41,9 @@
     {
       "name": "current_value",
       "type": "label",
-      "label": "Value",
-      "default": "No data"
+      "label": "Current Value",
+      "default": "No data received",
+      "runtime_update": true
     },
     {
       "name": "trigger_status",

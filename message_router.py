@@ -23,300 +23,111 @@ Author: Interaction Framework Team
 License: MIT
 """
 
-from typing import Dict, List, Any, Callable
 import threading
+from typing import Dict, List, Any, Callable, Optional, Tuple
+import hashlib
 
-class MessageRouter:
+class EventRouter:
     """
-    Central message routing system for connecting input and output modules.
-    
-    The MessageRouter is responsible for managing all communication between
-    modules in the Interaction framework. It maintains a registry of module
-    connections and routes events from input modules to their connected
-    output modules.
-    
-    The router uses a simple but effective callback-based system:
-    1. When modules are connected, the router registers the output module's
-       handle_event method as a callback for the input module
-    2. When the input module emits an event, the router calls all registered
-       callbacks with the event data
-    3. The output modules receive events through their handle_event method
-    4. The router handles cleanup when modules are disconnected
-    
-    Key Features:
-    - Automatic event routing between connected modules
-    - Thread-safe operation for concurrent event handling
-    - Automatic cleanup of disconnected modules
-    - Error handling and logging for failed event delivery
-    - Support for multiple output modules per input module
-    
-    Attributes:
-        connections (Dict): Registry of module connections
-        lock (threading.Lock): Thread lock for safe concurrent access
+    Central event routing system for modules, GUI, and system events.
+    Supports state tracking, settings-based routing, event subscription/publication,
+    runtime reconfiguration, and debugging/logging hooks.
     """
-    
     def __init__(self):
-        """
-        Initialize the message router.
-        
-        Creates an empty connection registry and a thread lock for
-        safe concurrent access to the routing system.
-        """
-        # Registry of module connections: {input_module_id: [output_modules]}
-        self.connections = {}
-        
-        # Thread lock for safe concurrent access
+        self.connections = {}  # {input_settings_key: [output_modules]}
+        self.state_subscribers = []  # [(module, callback)]
+        self.event_subscribers = {}  # {event_type: [(callback, filter)]}
         self.lock = threading.Lock()
-    
-    def connect_modules(self, input_module, output_module):
-        """
-        Connect an input module to an output module.
-        
-        This method establishes a connection between an input module and an
-        output module. When the input module emits an event, it will be
-        automatically routed to the output module's handle_event method.
-        
-        Args:
-            input_module: The input module that will emit events
-            output_module: The output module that will receive events
-            
-        Note: The connection is bidirectional - the input module gets a
-        callback to the output module's handle_event method, and the output
-        module is registered to receive events from the input module.
-        
-        Example:
-            router = MessageRouter()
-            router.connect_modules(osc_input, audio_output)
-            # Now when osc_input emits an event, audio_output.handle_event() is called
-        """
-        # Validate module classifications are compatible
-        if not self._validate_classification_compatibility(input_module, output_module):
-            print(f"❌ Cannot connect modules with incompatible classifications: "
-                  f"{input_module.manifest.get('name', 'Unknown Input')} "
-                  f"({input_module.manifest.get('classification', 'unknown')}) -> "
-                  f"{output_module.manifest.get('name', 'Unknown Output')} "
-                  f"({output_module.manifest.get('classification', 'unknown')})")
-            return False
-        # Validate mode compatibility
-        input_mode = input_module.manifest.get('mode')
-        output_mode = output_module.manifest.get('mode')
-        if input_mode and output_mode and input_mode != output_mode:
-            print(f"❌ Cannot connect modules with incompatible modes: "
-                  f"{input_module.manifest.get('name', 'Unknown Input')} [mode={input_mode}] -> "
-                  f"{output_module.manifest.get('name', 'Unknown Output')} [mode={output_mode}]")
-            return False
-        
+        self.module_states = {}  # {module_id: state}
+        self.debug_log = []  # [(event_type, data, meta)]
+
+    def _settings_key(self, settings: dict) -> str:
+        # Create a hashable key from settings dict for grouping
+        return hashlib.sha256(str(sorted(settings.items())).encode()).hexdigest() if settings else "default"
+
+    def connect_modules(self, input_module, output_module, settings: Optional[dict]=None):
+        # Use settings key for grouping outputs by input settings
+        key = self._settings_key(settings or getattr(input_module, 'config', {}))
         with self.lock:
-            # Get unique identifiers for the modules
-            input_id = id(input_module)
-            output_id = id(output_module)
-            
-            # Initialize the connection list for this input module if it doesn't exist
-            if input_id not in self.connections:
-                self.connections[input_id] = []
-            
-            # Add the output module to the input module's connection list
-            if output_module not in self.connections[input_id]:
-                self.connections[input_id].append(output_module)
-                
-                # Register the output module's handle_event method as a callback
-                # for the input module's event emission
+            if key not in self.connections:
+                self.connections[key] = []
+            if output_module not in self.connections[key]:
+                self.connections[key].append(output_module)
                 input_module.add_event_callback(output_module.handle_event)
-                
-                print(f"✅ Connected {input_module.manifest.get('name', 'Unknown Input')} "
-                      f"to {output_module.manifest.get('name', 'Unknown Output')}")
-        
+                self._log_debug('connect', {'input': input_module, 'output': output_module, 'settings': settings})
         return True
-    
-    def _validate_classification_compatibility(self, input_module, output_module):
-        """
-        Validate that input and output modules have compatible classifications.
-        
-        Args:
-            input_module: The input module to validate
-            output_module: The output module to validate
-            
-        Returns:
-            bool: True if classifications are compatible, False otherwise
-            
-        Note: This method enforces that trigger modules can only connect to
-        trigger modules, and streaming modules can only connect to streaming modules.
-        Modules without classification are allowed to connect to any module.
-        """
-        input_classification = input_module.manifest.get('classification')
-        output_classification = output_module.manifest.get('classification')
-        
-        # If either module doesn't have a classification, allow the connection
-        if not input_classification or not output_classification:
-            return True
-        
-        # Both modules must have the same classification
-        return input_classification == output_classification
-    
-    def disconnect_modules(self, input_module, output_module):
-        """
-        Disconnect an input module from an output module.
-        
-        This method removes the connection between an input module and an
-        output module. The output module will no longer receive events from
-        the input module.
-        
-        Args:
-            input_module: The input module to disconnect
-            output_module: The output module to disconnect
-            
-        Note: This method is called automatically when modules are removed
-        or reconfigured. It ensures proper cleanup of event callbacks to
-        prevent memory leaks.
-        """
+
+    def disconnect_modules(self, input_module, output_module, settings: Optional[dict]=None):
+        key = self._settings_key(settings or getattr(input_module, 'config', {}))
         with self.lock:
-            input_id = id(input_module)
-            
-            if input_id in self.connections:
-                # Remove the output module from the connection list
-                if output_module in self.connections[input_id]:
-                    self.connections[input_id].remove(output_module)
-                    
-                    # Remove the callback from the input module
-                    input_module.remove_event_callback(output_module.handle_event)
-                    
-                    print(f"❌ Disconnected {input_module.manifest.get('name', 'Unknown Input')} "
-                          f"from {output_module.manifest.get('name', 'Unknown Output')}")
-                
-                # Clean up empty connection lists
-                if not self.connections[input_id]:
-                    del self.connections[input_id]
-    
-    def disconnect_all(self, module):
-        """
-        Disconnect a module from all its connections.
-        
-        This method removes all connections for a given module, whether it's
-        an input module or an output module. It's used when a module is being
-        removed or reconfigured.
-        
-        Args:
-            module: The module to disconnect from all connections
-            
-        Note: This method handles both input and output module disconnection.
-        For input modules, it removes all their output connections. For output
-        modules, it removes them from all input module connection lists.
-        """
+            if key in self.connections and output_module in self.connections[key]:
+                self.connections[key].remove(output_module)
+                input_module.remove_event_callback(output_module.handle_event)
+                self._log_debug('disconnect', {'input': input_module, 'output': output_module, 'settings': settings})
+                if not self.connections[key]:
+                    del self.connections[key]
+
+    def subscribe(self, event_type: str, callback: Callable, filter: Optional[Callable]=None):
         with self.lock:
-            module_id = id(module)
-            
-            # Remove this module as an input (remove all its output connections)
-            if module_id in self.connections:
-                for output_module in self.connections[module_id]:
-                    module.remove_event_callback(output_module.handle_event)
-                del self.connections[module_id]
-            
-            # Remove this module as an output (remove from all input connection lists)
-            for input_id, output_modules in list(self.connections.items()):
-                if module in output_modules:
-                    output_modules.remove(module)
-                    # Note: We can't easily remove the callback here since we don't
-                    # have a reference to the input module, but this is handled
-                    # by the disconnect_modules method when called properly
-    
+            if event_type not in self.event_subscribers:
+                self.event_subscribers[event_type] = []
+            self.event_subscribers[event_type].append((callback, filter))
+
+    def unsubscribe(self, event_type: str, callback: Callable):
+        with self.lock:
+            if event_type in self.event_subscribers:
+                self.event_subscribers[event_type] = [
+                    (cb, f) for (cb, f) in self.event_subscribers[event_type] if cb != callback
+                ]
+
+    def publish(self, event_type: str, data: Any, settings: Optional[dict]=None):
+        # Publish an event to all subscribers (optionally filtered by settings)
+        with self.lock:
+            for cb, filt in self.event_subscribers.get(event_type, []):
+                if filt is None or filt(data, settings):
+                    cb(data)
+            self._log_debug('publish', {'event_type': event_type, 'data': data, 'settings': settings})
+
+    def register_state_subscriber(self, module, callback: Callable):
+        with self.lock:
+            self.state_subscribers.append((module, callback))
+
+    def emit_state_change(self, module, new_state: str):
+        module_id = id(module)
+        with self.lock:
+            self.module_states[module_id] = new_state
+            for m, cb in self.state_subscribers:
+                if m is None or m == module:
+                    cb(module, new_state)
+            self._log_debug('state_change', {'module': module, 'state': new_state})
+
+    def get_module_state(self, module) -> Optional[str]:
+        return self.module_states.get(id(module))
+
+    def get_all_states(self) -> Dict[int, str]:
+        return dict(self.module_states)
+
     def get_connections(self):
-        """
-        Get a copy of the current connection registry.
-        
-        Returns:
-            Dict: A copy of the connection registry showing all module connections
-            
-        Note: This method returns a copy to prevent external modification of
-        the internal connection registry. The returned data can be used for
-        debugging or displaying connection information in the GUI.
-        """
         with self.lock:
-            return self.connections.copy()
-    
-    def route_event(self, input_module, event_data):
-        """
-        Route an event from an input module to all connected output modules.
-        
-        This method is called by input modules when they want to emit an event.
-        The router finds all connected output modules and calls their handle_event
-        method with the event data.
-        
-        Args:
-            input_module: The input module that is emitting the event
-            event_data (Dict): The event data to route to output modules
-            
-        Note: This method is typically called internally by the input module's
-        emit_event method. The router handles error recovery if an output module
-        fails to process an event.
-        """
-        with self.lock:
-            input_id = id(input_module)
-            
-            if input_id in self.connections:
-                # Route the event to all connected output modules
-                for output_module in self.connections[input_id]:
-                    try:
-                        output_module.handle_event(event_data)
-                    except Exception as e:
-                        # Log errors but don't crash the routing system
-                        # print(f"❌ Error routing event to {output_module.manifest.get('name', 'Unknown Output')}: {e}")
-                        pass
-    
+            return {k: list(v) for k, v in self.connections.items()}
+
+    def reconfigure_connection(self, input_module, output_module, old_settings: dict, new_settings: dict):
+        self.disconnect_modules(input_module, output_module, old_settings)
+        self.connect_modules(input_module, output_module, new_settings)
+        self._log_debug('reconfigure', {'input': input_module, 'output': output_module, 'old': old_settings, 'new': new_settings})
+
     def clear_all_connections(self):
-        """
-        Clear all module connections.
-        
-        This method removes all connections between modules. It's typically
-        called when the application is shutting down or when all modules
-        are being reset.
-        
-        Note: This method ensures proper cleanup of all event callbacks to
-        prevent memory leaks and ensure clean shutdown.
-        """
         with self.lock:
-            # Remove all callbacks from input modules
-            for input_id, output_modules in self.connections.items():
-                # We can't easily get the input module reference here, but
-                # this is typically called during shutdown when modules are
-                # being destroyed anyway
-                pass
-            
-            # Clear the connection registry
+            for key, outputs in self.connections.items():
+                for output in outputs:
+                    # No direct reference to input_module, so this is a best-effort cleanup
+                    pass
             self.connections.clear()
-            print("🧹 Cleared all module connections")
-    
-    def get_connection_count(self):
-        """
-        Get the total number of active connections.
-        
-        Returns:
-            int: The total number of connections between modules
-            
-        Note: This can be useful for debugging or displaying connection
-        statistics in the GUI.
-        """
-        with self.lock:
-            total = 0
-            for output_modules in self.connections.values():
-                total += len(output_modules)
-            return total
-    
-    def is_connected(self, input_module, output_module):
-        """
-        Check if two modules are connected.
-        
-        Args:
-            input_module: The input module to check
-            output_module: The output module to check
-            
-        Returns:
-            bool: True if the modules are connected, False otherwise
-            
-        Note: This method can be useful for debugging or preventing
-        duplicate connections.
-        """
-        with self.lock:
-            input_id = id(input_module)
-            if input_id in self.connections:
-                return output_module in self.connections[input_id]
-            return False
+            self._log_debug('clear_all', {})
+
+    def _log_debug(self, event_type, meta):
+        self.debug_log.append((event_type, meta))
+        # Optionally, print or send to GUI for live debugging
+
+# For backward compatibility
+MessageRouter = EventRouter

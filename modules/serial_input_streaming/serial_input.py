@@ -220,7 +220,7 @@ class SerialInputModule(ModuleBase):
                                 if line:  # Skip empty lines
                                     parsed_value = self._parse_data(line)
                                     if parsed_value is not None:
-                                        self._handle_data(parsed_value)
+                                        self._on_serial_data(parsed_value, self.port, time.time())
                                         
                     except serial.SerialException as e:
                         self.log_message(f"⚠️ Serial read error: {e}")
@@ -237,26 +237,17 @@ class SerialInputModule(ModuleBase):
                 self.log_message(f"❌ Error in serial read loop: {e}")
                 time.sleep(1)
 
-    def _handle_data(self, value):
-        """Handle parsed data and send to callbacks"""
-        with self._lock:
-            self.last_received_data = value
-        
-        # Create event data
+    def _on_serial_data(self, value, port, timestamp):
+        # Called when new serial data is received
         event = {
             'value': value,
-            'timestamp': time.time(),
-            'port': self.port,
-            'baud_rate': self.baud_rate,
-            'stream': True
+            'current_value': value,
+            'port': port,
+            'timestamp': timestamp
         }
-        
-        # Send to all callbacks
-        for callback in list(self._event_callbacks):
-            try:
-                callback(event)
-            except Exception as e:
-                self.log_message(f"❌ Error in serial event callback: {e}")
+        for callback in self._event_callbacks:
+            callback(event)
+        self.log_message(f"Serial Input Streaming emitting event: {event}")
 
     def get_display_data(self):
         """Return data for GUI display fields"""

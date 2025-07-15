@@ -22,262 +22,182 @@ License: MIT
 import json
 import os
 from typing import Dict, Any, Callable, Optional
+from message_router import EventRouter
+from abc import ABC, abstractmethod
+
+class ModuleStrategy(ABC):
+    @abstractmethod
+    def process_event(self, event: Dict) -> None:
+        pass
+
+    @abstractmethod
+    def configure(self, config: Dict) -> None:
+        pass
+
+class TriggerStrategy(ModuleStrategy):
+    def process_event(self, event: Dict) -> None:
+        # Handle trigger-based events (to be implemented in concrete modules)
+        pass
+    def configure(self, config: Dict) -> None:
+        # Configure trigger-based module (to be implemented in concrete modules)
+        pass
+
+class StreamingStrategy(ModuleStrategy):
+    def process_event(self, event: Dict) -> None:
+        # Handle streaming events (to be implemented in concrete modules)
+        pass
+    def configure(self, config: Dict) -> None:
+        # Configure streaming module (to be implemented in concrete modules)
+        pass
+
+class ModuleState(ABC):
+    @abstractmethod
+    def start(self, context: 'ModuleBase') -> None:
+        pass
+    @abstractmethod
+    def stop(self, context: 'ModuleBase') -> None:
+        pass
+    @abstractmethod
+    def handle_event(self, context: 'ModuleBase', event: Dict) -> None:
+        pass
+
+class InitializedState(ModuleState):
+    def start(self, context: 'ModuleBase') -> None:
+        context.auto_configure()
+        context.set_state('starting')
+        context.log_message(f"Starting {context.manifest.get('name', 'Unknown Module')}")
+        context.set_state('ready')
+        context.set_state_obj(RunningState())
+    def stop(self, context: 'ModuleBase') -> None:
+        context.log_message("Cannot stop: Module not started.")
+    def handle_event(self, context: 'ModuleBase', event: Dict) -> None:
+        context.log_message("Warning: Module not started. Event ignored.")
+
+class RunningState(ModuleState):
+    def start(self, context: 'ModuleBase') -> None:
+        context.log_message("Module already running.")
+    def stop(self, context: 'ModuleBase') -> None:
+        context.set_state('stopping')
+        context.log_message(f"Stopping {context.manifest.get('name', 'Unknown Module')}")
+        context.set_state('stopped')
+        context.set_state_obj(StoppedState())
+    def handle_event(self, context: 'ModuleBase', event: Dict) -> None:
+        if context.strategy:
+            context.strategy.process_event(event)
+        else:
+            context.log_message(f"Received event: {event}")
+
+class StoppedState(ModuleState):
+    def start(self, context: 'ModuleBase') -> None:
+        context.log_message("Restarting module...")
+        context.set_state_obj(InitializedState())
+        context.start()
+    def stop(self, context: 'ModuleBase') -> None:
+        context.log_message("Module already stopped.")
+    def handle_event(self, context: 'ModuleBase', event: Dict) -> None:
+        context.log_message("Warning: Module stopped. Event ignored.")
 
 class ModuleBase:
     """
-    Base class for all Interaction modules (input and output).
-    
-    This class provides the foundation that all modules build upon. It handles
-    common functionality like configuration management, event emission, logging,
-    and lifecycle management. Modules that inherit from this class get all this
-    functionality automatically.
-    
-    Key Features:
-    - Configuration loading and saving
-    - Event emission to connected modules
-    - Standardized logging interface
-    - Lifecycle management (start/stop)
-    - Manifest validation and loading
-    
-    Attributes:
-        config (Dict[str, Any]): Module configuration dictionary
-        manifest (Dict[str, Any]): Module manifest dictionary
-        log_callback (Callable): Function to call for logging
-        _event_callbacks (List[Callable]): List of callback functions for events
+    Base class for all Interaction modules (input and output), now event-driven and stateful.
+    Handles config, manifest, state, event emission, and lifecycle via EventRouter.
     """
-    
-    def __init__(self, config: Dict[str, Any], manifest: Dict[str, Any], 
-                 log_callback: Callable = None):
-        """
-        Initialize the module with configuration and manifest.
-        
-        Args:
-            config (Dict[str, Any]): Module configuration dictionary
-            manifest (Dict[str, Any]): Module manifest dictionary containing metadata
-            log_callback (Callable): Function to call for logging (default: print)
-            
-        Note: The manifest contains metadata about the module including its name,
-        type (input/output), description, and configuration schema. The config
-        contains the actual settings for this specific instance of the module.
-        """
-        if log_callback is None:
-            log_callback = lambda msg: None
+    event_router = EventRouter()  # Shared router for all modules
+
+    def __init__(self, config: Dict[str, Any], manifest: Dict[str, Any], log_callback: Optional[Callable] = None, strategy: Optional[ModuleStrategy] = None):
         self.config = config or {}
         self.manifest = manifest or {}
-        self.log_callback = log_callback
-        self._event_callbacks = []
-        
-        # Log module initialization
-        module_name = self.manifest.get('name', 'Unknown Module')
-        self.log_message(f"Initializing {module_name}")
-    
-    def auto_configure(self):
-        """
-        Attempt to auto-configure the module if required resources are missing.
-        Subclasses should override this to select a default port, device, etc.
-        """
-        pass
+        self.log_callback = log_callback if log_callback is not None else (lambda *args, **kwargs: None)
+        self.state = 'created'
+        self._event_callbacks = []  # For backward compatibility
+        self.strategy = strategy
+        self.state_obj: ModuleState = InitializedState()
+        self.event_router.emit_state_change(self, self.state)
+        self.log_message(f"Initializing {self.manifest.get('name', 'Unknown Module')}")
+
+    def set_state(self, new_state: str):
+        self.state = new_state
+        self.event_router.emit_state_change(self, new_state)
+        self.log_message(f"State changed to {new_state}")
+
+    def configure(self, config: Optional[Dict[str, Any]] = None):
+        if self.strategy:
+            self.strategy.configure(config or self.config)
+        else:
+            if config is not None:
+                self.config = config
+            self.set_state('configured')
+            self.log_message(f"Configured with: {self.config}")
 
     def start(self):
-        """
-        Start the module's operation.
-        
-        This method should be overridden by subclasses to initialize any
-        resources needed for the module to function (network connections,
-        audio devices, sensors, etc.).
-        
-        The base implementation just logs that the module has started.
-        Subclasses should call super().start() to maintain logging.
-        
-        Note: This method is called by the GUI when the module is activated.
-        It's the responsibility of the module to handle any errors that occur
-        during startup and log them appropriately.
-        """
-        self.auto_configure()
-        module_name = self.manifest.get('name', 'Unknown Module')
-        self.log_message(f"Starting {module_name}")
-    
+        self.state_obj.start(self)
+
     def stop(self):
-        """
-        Stop the module's operation and clean up resources.
-        
-        This method should be overridden by subclasses to clean up any
-        resources that were allocated during start() (close network connections,
-        release audio devices, stop sensors, etc.).
-        
-        The base implementation just logs that the module has stopped.
-        Subclasses should call super().stop() to maintain logging.
-        
-        Note: This method is called by the GUI when the module is deactivated
-        or when the application is shutting down. It's critical that all
-        resources are properly cleaned up to prevent memory leaks and
-        resource contention.
-        """
-        module_name = self.manifest.get('name', 'Unknown Module')
-        self.log_message(f"Stopping {module_name}")
-    
+        self.state_obj.stop(self)
+
+    def cleanup(self):
+        self.set_state('cleaning_up')
+        self.log_message(f"Cleaning up {self.manifest.get('name', 'Unknown Module')}")
+        self.set_state('cleaned_up')
+
     def emit_event(self, data: Dict[str, Any]):
-        """
-        Emit an event to all registered callbacks.
-        """
-        module_name = self.manifest.get('name', 'Unknown Module')
-        # Only log significant events to reduce verbosity
-        if 'value' in data or 'trigger' in data:
-            self.log_message(f"{module_name} emitting event: {data}")
-        # Call all registered event callbacks
+        self.log_message(f"Emitting event: {data}")
+        self.event_router.publish('module_event', {'module': self, 'data': data}, settings=self.config)
+        # For backward compatibility, call direct callbacks
         for callback in self._event_callbacks:
             try:
                 callback(data)
             except Exception as e:
                 self.log_message(f"Error in event callback: {e}")
-    
+
     def handle_event(self, data: Dict[str, Any]):
-        """
-        Handle an incoming event from another module.
-        
-        This method is called by the message router when an event is sent to
-        this module. Output modules should override this method to process
-        incoming events and generate their responses.
-        
-        Args:
-            data (Dict[str, Any]): Event data dictionary containing the event information
-            
-        Note: This is the primary method that output modules use to receive
-        events from input modules. The method should be overridden to implement
-        the specific behavior of the output module (play audio, trigger video,
-        control lighting, etc.).
-        
-        Example:
-            def handle_event(self, data):
-                trigger_value = data.get("trigger", 0)
-                if trigger_value > 0.5:
-                    self.play_audio()
-        """
-        module_name = self.manifest.get('name', 'Unknown Module')
-        self.log_message(f"{module_name} received event: {data}")
-    
+        self.state_obj.handle_event(self, data)
+        # Subclasses override for custom behavior
+
     def add_event_callback(self, callback: Callable):
-        """
-        Add a callback function to be called when events are emitted.
-        This method is used internally by the message router to connect
-        modules together. When an input module emits an event, all registered
-        callbacks are called with the event data.
-        """
+        # For backward compatibility; new code should use EventRouter
         if callback is not None:
             self._event_callbacks.append(callback)
 
     def remove_event_callback(self, callback: Callable):
-        """
-        Remove a callback function from the event callback list.
-        """
         if callback is not None and callback in self._event_callbacks:
             self._event_callbacks.remove(callback)
-    
+
     def log_message(self, message: str):
-        """
-        Log a message using the module's logging callback.
-        
-        This method provides a standardized way for modules to log messages.
-        The messages are passed to the log_callback function that was provided
-        during initialization, which typically displays them in the GUI.
-        
-        Args:
-            message (str): Message to log
-            
-        Note: All modules should use this method for logging instead of print()
-        or other logging methods. This ensures that messages are displayed
-        consistently in the GUI and can be filtered by log level.
-        """
-        if self.log_callback:
-            self.log_callback(message)
-    
+        self.log_callback(message)
+        self.event_router._log_debug('log', {'module': self, 'msg': message})
+
     def update_config(self, new_config: Dict[str, Any]):
-        """
-        Update the module's configuration.
-        
-        This method is called by the GUI when the user changes module settings.
-        The module should update its internal state based on the new configuration
-        and restart if necessary.
-        
-        Args:
-            new_config (Dict[str, Any]): New configuration dictionary
-            
-        Note: This method is called automatically by the GUI when configuration
-        changes are made. Modules should override this method if they need to
-        perform special handling when their configuration changes (e.g., restart
-        network connections, reload audio files, etc.).
-        """
         old_config = self.config.copy()
         self.config = new_config
-        
-        module_name = self.manifest.get('name', 'Unknown Module')
-        self.log_message(f"{module_name} configuration updated")
-        
-        # If the module needs to restart to apply new configuration,
-        # subclasses should override this method and implement their own
-        # restart logic based on their specific needs
-    
+        self.log_message(f"Configuration updated: {old_config} -> {new_config}")
+        # Call the hook for each changed field
+        for k, v in new_config.items():
+            if old_config.get(k) != v:
+                self.on_config_field_changed(k, old_config.get(k), v)
+        self.set_state('configured')
+
+    def on_config_field_changed(self, field_name, old_value, new_value):
+        # By default, do nothing. Subclasses can override for dynamic config changes.
+        pass
+
     def get_config(self) -> Dict[str, Any]:
-        """
-        Get the current module configuration.
-        
-        Returns:
-            Dict[str, Any]: Current configuration dictionary
-            
-        Note: This method is used by the GUI to display and edit module
-        configuration. The returned dictionary should contain all the
-        configuration values that the module uses.
-        """
         return self.config.copy()
-    
+
     def get_manifest(self) -> Dict[str, Any]:
-        """
-        Get the module's manifest information.
-        
-        Returns:
-            Dict[str, Any]: Module manifest dictionary
-            
-        Note: The manifest contains metadata about the module including its
-        name, type, description, and configuration schema. This information
-        is used by the GUI to display module information and generate
-        configuration forms.
-        """
         return self.manifest.copy()
-    
+
     def validate_config(self, config: Dict[str, Any]) -> bool:
-        """
-        Validate a configuration dictionary against the module's schema.
-        
-        This method checks if the provided configuration matches the schema
-        defined in the module's manifest. It ensures that all required fields
-        are present and have the correct types.
-        
-        Args:
-            config (Dict[str, Any]): Configuration to validate
-            
-        Returns:
-            bool: True if configuration is valid, False otherwise
-            
-        Note: This method is used by the GUI to validate configuration changes
-        before applying them. Modules can override this method to implement
-        custom validation logic beyond the basic schema validation.
-        """
         if not self.manifest or 'config_schema' not in self.manifest:
-            return True  # No schema defined, assume valid
-        
+            return True
         schema = self.manifest['config_schema']
-        
-        # Check that all required fields are present
         for field_name, field_info in schema.items():
             if field_info.get('required', False) and field_name not in config:
                 self.log_message(f"Missing required field: {field_name}")
                 return False
-            
-            # Check field type if specified
             if field_name in config and 'type' in field_info:
                 expected_type = field_info['type']
                 actual_value = config[field_name]
-                
                 if expected_type == 'number' and not isinstance(actual_value, (int, float)):
                     self.log_message(f"Field {field_name} must be a number")
                     return False
@@ -287,5 +207,10 @@ class ModuleBase:
                 elif expected_type == 'boolean' and not isinstance(actual_value, bool):
                     self.log_message(f"Field {field_name} must be a boolean")
                     return False
-        
         return True
+
+    def auto_configure(self):
+        pass
+
+    def set_state_obj(self, new_state_obj: ModuleState):
+        self.state_obj = new_state_obj

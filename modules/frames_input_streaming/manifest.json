@@ -11,8 +11,9 @@
     {
       "name": "frame_number",
       "type": "label",
-      "label": "Frame Number",
-      "default": "No frame received"
+      "label": "Current Frame",
+      "default": "No frame received",
+      "runtime_update": true
     }
   ]
 } 

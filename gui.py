@@ -1,6 +1,5 @@
 import tkinter as tk
 from tkinter import ttk, filedialog
-import json
 import os
 import socket
 import time
@@ -10,6 +9,9 @@ from PIL import Image, ImageTk
 from modules.audio_output_trigger.audio_output import AudioOutputModule
 from module_loader import input_event_router
 from module_loader import create_and_start_module
+from performance import get_config, save_config, get_message_router
+import traceback
+import json  # Only for formatting, not for config loading
 
 # Logging system with different verbosity levels
 class LogLevel:
@@ -83,37 +85,18 @@ def get_local_ip():
         return "127.0.0.1"
 
 def load_app_config():
-    """Load app-level configuration"""
+    """Load app-level configuration with caching"""
     default_config = {
         "installation_name": "Default Installation",
         "theme": "dark",
         "version": "1.0.0",
         "log_level": "Outputs"
     }
-    
-    if os.path.exists(APP_CONFIG_PATH):
-        try:
-            with open(APP_CONFIG_PATH, "r") as f:
-                config = json.load(f)
-                # Ensure all default keys exist
-                for key, value in default_config.items():
-                    if key not in config:
-                        config[key] = value
-                return config
-        except Exception:
-            return default_config
-    else:
-        # Create default config file
-        os.makedirs(os.path.dirname(APP_CONFIG_PATH), exist_ok=True)
-        with open(APP_CONFIG_PATH, "w") as f:
-            json.dump(default_config, f, indent=2)
-        return default_config
+    return get_config(APP_CONFIG_PATH, default_config)
 
 def save_app_config(config):
-    """Save app-level configuration"""
-    os.makedirs(os.path.dirname(APP_CONFIG_PATH), exist_ok=True)
-    with open(APP_CONFIG_PATH, "w") as f:
-        json.dump(config, f, indent=2)
+    """Save app-level configuration with caching"""
+    save_config(APP_CONFIG_PATH, config)
 
 class EditableLabel:
     """A label that can be clicked to become an editable entry field"""
@@ -169,81 +152,328 @@ class InteractionBlock:
     cursor_img = None  # Class-level cache for the cursor image
 
     def __init__(self, parent, loader, logger, on_change_callback, remove_callback, preset=None, current_log_level=None, gui_ref=None):
-        self.parent = parent
-        self.loader = loader
-        self.logger = logger
-        self.on_change_callback = on_change_callback
-        self.remove_callback = remove_callback
-        self.gui_ref = gui_ref  # Store reference to InteractionGUI
-        self.input_var = tk.StringVar()
-        self.output_var = tk.StringVar()
-        self.input_instance = None
-        self.output_instance = None
-        self.input_config_fields = {}
-        self.output_config_fields = {}
-        self.input_mode = None  # Store mode for input module
-        self.output_mode = None  # Store mode for output module
-        self.cursor_running = True
-        self.cursor_thread = threading.Thread(target=self._cursor_animation_loop, daemon=True)
-        self.cursor_thread.start()
-        # Register cursor thread with GUI for shutdown
-        if self.gui_ref and hasattr(self.gui_ref, 'threads'):
-            self.gui_ref.threads.append(self.cursor_thread)
-        self.osc_input_key = None  # Track the (port, address) key for shared input
-        self.osc_callback = None   # Store our callback for removal
-        self.input_event_callback = None  # For router registration
-        self.input_event_key = None       # For router registration
-        self._initialized = False  # Prevent double initialization
-        self._output_initialized = False  # Prevent double output instance creation
-        self._last_output_module = None
-        self._last_protocol = None
-        self.frame_received_once = False  # Track if a frame has been received for frames_input_streaming
-        self.frame_last_value = None      # Store last received frame value
-        if preset is None:
-            self.build_block()
-            self._initialized = True
-        else:
-            self.preset = preset
-            self.current_log_level = current_log_level
+        logger.verbose(f"[InteractionBlock] __init__ start for preset: {preset}")
+        try:
+            self.parent = parent
+            self.loader = loader
+            self.logger = logger
+            self.on_change_callback = on_change_callback
+            self.remove_callback = remove_callback
+            self.gui_ref = gui_ref  # Store reference to InteractionGUI
+            self.input_var = tk.StringVar()
+            self.output_var = tk.StringVar()
+            self.input_instance = None
+            self.output_instance = None
+            self.input_config_fields = {}
+            self.output_config_fields = {}
+            self.input_mode = None  # Store mode for input module
+            self.output_mode = None  # Store mode for output module
+            self.cursor_running = True
+            self.cursor_thread = threading.Thread(target=self._cursor_animation_loop, daemon=True)
+            self.cursor_thread.start()
+            if self.gui_ref and hasattr(self.gui_ref, 'threads'):
+                self.gui_ref.threads.append(self.cursor_thread)
+            self.osc_input_key = None
+            self.osc_callback = None
+            self.input_event_callback = None
+            self.input_event_key = None
+            self._initialized = False
+            self._output_initialized = False
+            self._last_output_module = None
+            self._last_protocol = None
+            self.frame_received_once = False
+            self.frame_last_value = None
+            self.output_config_memory = {}  # <-- Memory-backed config for output fields
+            if preset is None:
+                self.build_block()
+                self._initialized = True
+            else:
+                self.preset = preset
+                self.current_log_level = current_log_level
+                self.logger.verbose(f"[InteractionBlock] Calling initialize_from_preset for preset: {preset}")
+                self.initialize_from_preset()
+            self.logger.verbose(f"[InteractionBlock] __init__ end for preset: {preset}")
+        except Exception as e:
+            logger.verbose(f"[InteractionBlock] __init__ exception for preset: {preset}\nReason: {e}\n{traceback.format_exc()}")
+            raise
 
     def initialize_from_preset(self):
-        if self._initialized:
-            return  # Prevent double initialization
-        self._initialized = True
-        preset = self.preset or {}
-        input_data = preset.get("input") or {}
-        output_data = preset.get("output") or {}
-        input_module = input_data.get("module", "")
-        output_module = output_data.get("module", "")
-        self.input_var.set(input_module)
-        self.output_var.set(output_module)
-        # --- Patch: Temporarily disable on_change_callback during initial field population ---
-        original_on_change_callback = self.on_change_callback
-        self.on_change_callback = None
-        self.build_block()  # Now build the UI (only once)
-        # Populate input fields
-        if self.loader.load_manifest(input_module) is not None:
-            self.draw_input_fields(create_instance=False)
-            for k, v in input_data.get("config", {}).items():
-                if k in self.input_config_fields:
-                    field = self.input_config_fields[k]
-                    if isinstance(field, tk.Entry):
-                        field.delete(0, tk.END)
-                        field.insert(0, v)
-                    elif isinstance(field, tk.StringVar):
-                        field.set(v)
-        # --- Fix: Redraw output fields for protocol-dependent GUI on startup ---
-        self.draw_output_fields()  # <-- Add this line to guarantee protocol GUI is correct
-        # Now create instance with the populated config values
-        # Use appropriate logging method based on module type
-        if input_module == "serial_input_trigger" or input_module == "serial_input_streaming":
-            log_callback = self.logger.serial
-        elif input_module == "osc_input_trigger":
-            log_callback = self.logger.osc
-        else:
-            log_callback = self.logger.verbose
-        # --- Patch: Restore on_change_callback after initial field population ---
-        self.on_change_callback = original_on_change_callback
+        self.logger.verbose(f"[InteractionBlock] initialize_from_preset start for preset: {self.preset}")
+        try:
+            if self._initialized:
+                return  # Prevent double initialization
+            self._initialized = True
+            preset = self.preset or {}
+            input_data = preset.get("input") or {}
+            output_data = preset.get("output") or {}
+            input_module = input_data.get("module", "")
+            output_module = output_data.get("module", "")
+            self.input_var.set(input_module)
+            self.output_var.set(output_module)
+            # --- Memory-backed config: store full output config ---
+            self.output_config_memory = output_data.get("config", {}).copy() if output_data.get("config") else {}
+            original_on_change_callback = self.on_change_callback
+            self.on_change_callback = None
+            self.build_block()  # Now build the UI (only once)
+            # Populate input fields
+            if self.loader.load_manifest(input_module) is not None:
+                self.draw_input_fields(create_instance=False)
+                for k, v in input_data.get("config", {}).items():
+                    if k in self.input_config_fields:
+                        field = self.input_config_fields[k]
+                        if isinstance(field, tk.Entry):
+                            field.delete(0, tk.END)
+                            field.insert(0, v)
+                        elif isinstance(field, tk.StringVar):
+                            field.set(v)
+            self.draw_output_fields()  # Draw output fields from memory
+            self._output_initialized = False  # Force recreation
+            self.create_output_instance(
+                self.output_var.get(),
+                self.loader.load_manifest(self.output_var.get()),
+                self.get_output_config()
+            )
+            self.on_change_callback = original_on_change_callback
+            if input_module:
+                try:
+                    self.input_instance = self.loader.create_module_instance(
+                        input_module,
+                        self.get_input_config(),
+                        log_callback=self.logger.verbose
+                    )
+                    self.input_instance.start()
+                except Exception as e:
+                    self.logger.verbose(f"[InteractionBlock] Exception creating input_instance for {input_module}: {e}\n{traceback.format_exc()}")
+            self.logger.verbose(f"[InteractionBlock] initialize_from_preset end for preset: {self.preset}")
+        except Exception as e:
+            self.logger.verbose(f"[InteractionBlock] initialize_from_preset exception for preset: {self.preset}\nReason: {e}\n{traceback.format_exc()}")
+            raise
+
+    def draw_output_fields(self, event=None):
+        for widget in self.output_fields_container.winfo_children():
+            widget.destroy()
+        module_name = self.output_var.get()
+        manifest = self.loader.load_manifest(module_name)
+        if manifest is None:
+            return
+        if self._last_output_module != module_name:
+            self._output_initialized = False
+            self._last_output_module = module_name
+        current_config = self.output_config_memory.copy()  # Use memory-backed config
+        current_protocol = current_config.get('protocol', 'sacn')
+        fields = self.get_protocol_dependent_fields(manifest, current_protocol)
+        self.output_config_fields = {}
+        for field in fields:
+            if not self.should_show_field(field, current_config):
+                continue
+            value = current_config.get(field["name"], field.get("default"))
+            if field["type"] == "button":
+                action = field.get("action", field["name"])
+                button = ttk.Button(self.output_fields_container, text=field["label"], 
+                                  command=lambda name=action: self.handle_button_action(name), style="Action.TButton")
+                button.pack(fill="x", pady=5, padx=5)
+                continue
+            if field["type"] == "waveform":
+                waveform_label = ttk.Label(self.output_fields_container, text="Waveform", style="Label.TLabel")
+                waveform_label.pack(anchor="w", padx=5, pady=(10, 5))
+                waveform_container = ttk.Frame(self.output_fields_container, style="Fields.TFrame")
+                waveform_container.pack(fill="x", pady=(0, 10), padx=5)
+                waveform_canvas = tk.Canvas(waveform_container, width=300, height=60, bg="#111", highlightthickness=0)
+                waveform_canvas.pack(fill="x")
+                cursor_canvas = tk.Canvas(waveform_container, width=300, height=60, highlightthickness=0)
+                cursor_canvas.place(in_=waveform_container, x=0, y=0, relwidth=1, relheight=1)
+                self.output_config_fields[field["name"]] = {
+                    "waveform": waveform_canvas,
+                    "cursor": cursor_canvas,
+                    "container": waveform_container,
+                    "label": waveform_label,
+                    "start_time": None,
+                    "duration": None,
+                    "is_playing": False
+                }
+                continue
+            if field["type"] == "slider":
+                label = ttk.Label(self.output_fields_container, text=field["label"], style="Label.TLabel")
+                label.pack(anchor="w", padx=5, pady=(10, 5))
+                slider_frame = ttk.Frame(self.output_fields_container, style="Fields.TFrame")
+                slider_frame.pack(fill="x", pady=(0, 10), padx=5)
+                slider_var = tk.DoubleVar(value=value)
+                slider = ttk.Scale(slider_frame, from_=field.get("min", 0), to=field.get("max", 100), 
+                                 variable=slider_var, orient="horizontal", command=lambda v, f=field: self.on_slider_change(f, v))
+                slider.pack(side="left", fill="x", expand=True)
+                value_label = ttk.Label(slider_frame, text=f"{int(slider_var.get())}", style="Label.TLabel")
+                value_label.pack(side="right", padx=(10, 0))
+                self.output_config_fields[field["name"]] = {
+                    "slider": slider,
+                    "var": slider_var,
+                    "label": value_label
+                }
+                continue
+            elif field["type"] == "select":
+                label = ttk.Label(self.output_fields_container, text=field["label"], style="Label.TLabel")
+                label.pack(anchor="w", padx=5, pady=(10, 5))
+                options = field.get("options", [])
+                option_values = [opt.get("value", opt.get("label", "")) for opt in options]
+                option_labels = [opt.get("label", opt.get("value", "")) for opt in options]
+                current_label = value
+                if "value_map" in dict(zip(option_labels, option_values)):
+                    value_map = dict(zip(option_labels, option_values))
+                    for label, val in value_map.items():
+                        if val == value:
+                            current_label = label
+                            break
+                # Special handling for dmx_output_streaming serial_port dropdown
+                if field["name"] == "serial_port" and module_name == "dmx_output_streaming":
+                    try:
+                        from modules.dmx_output_streaming.dmx_output_streaming import get_available_serial_ports
+                        port_options = get_available_serial_ports()
+                        if not port_options:
+                            port_options = ["No ports available"]
+                        option_labels = port_options
+                        option_values = port_options
+                    except Exception as e:
+                        option_labels = ["Error getting ports"]
+                        option_values = ["Error getting ports"]
+                combo_var = tk.StringVar(value=current_label)
+                combo = ttk.Combobox(self.output_fields_container, textvariable=combo_var, 
+                                   values=option_labels, state="readonly", style="Combo.TCombobox")
+                combo.pack(fill="x", pady=(0, 10), padx=5)
+                self.output_config_fields[field["name"]] = {
+                    "combo": combo,
+                    "var": combo_var,
+                    "value_map": dict(zip(option_labels, option_values))
+                }
+                # Bind change events for protocol selection
+                if field["name"] == "protocol":
+                    def on_protocol_change(event=None, self=self, combo_var=combo_var):
+                        value = combo_var.get()
+                        if value:
+                            field_widget = self.output_config_fields[field["name"]]
+                            if isinstance(field_widget, dict) and "value_map" in field_widget:
+                                value_map = field_widget["value_map"]
+                                protocol_value = value_map.get(value, value)
+                            else:
+                                protocol_value = value
+                            self.output_config_memory[field["name"]] = protocol_value
+                            self.draw_output_fields()
+                            if self.on_change_callback:
+                                self.on_change_callback()
+                    combo.bind("<<ComboboxSelected>>", on_protocol_change)
+                elif field["name"] == "serial_port":
+                    def on_serial_port_change(event=None, self=self, combo_var=combo_var):
+                        value = combo_var.get()
+                        if value:
+                            # Always save to 'serial_port' key, never to 'current_frame' or any other key
+                            self.output_config_memory["serial_port"] = value
+                            if self.on_change_callback:
+                                self.on_change_callback()
+                    combo.bind("<<ComboboxSelected>>", on_serial_port_change)
+                else:
+                    combo.bind("<<ComboboxSelected>>", lambda e: self.on_output_change())
+                continue
+            elif field["type"] == "file":
+                label = ttk.Label(self.output_fields_container, text=field["label"], style="Label.TLabel")
+                label.pack(anchor="w", padx=5, pady=(10, 5))
+                file_frame = ttk.Frame(self.output_fields_container, style="Fields.TFrame")
+                file_frame.pack(fill="x", pady=(0, 10), padx=5)
+                entry = ttk.Entry(file_frame, style="Entry.TEntry")
+                entry.insert(0, value)
+                entry.pack(side="left", fill="x", expand=True)
+                button = ttk.Button(file_frame, text="Browse", 
+                                  command=lambda e=entry, ft=field.get("file_types", []): self.browse_csv_file(e, ft))
+                button.pack(side="right", padx=(5, 0))
+                self.output_config_fields[field["name"]] = entry
+                entry.bind("<FocusOut>", lambda e, name=field["name"], entry=entry: self._on_output_entry_change(name, entry))
+                entry.bind("<Return>", lambda e, name=field["name"], entry=entry: self._on_output_entry_change(name, entry))
+                continue
+            elif field["type"] == "text":
+                label = ttk.Label(self.output_fields_container, text=field["label"], style="Label.TLabel")
+                label.pack(anchor="w", padx=5, pady=(10, 5))
+                entry = ttk.Entry(self.output_fields_container, style="Entry.TEntry")
+                entry.insert(0, value)
+                entry.pack(fill="x", pady=(0, 10), padx=5)
+                self.output_config_fields[field["name"]] = entry
+                entry.bind("<FocusOut>", lambda e, name=field["name"], entry=entry: self._on_output_entry_change(name, entry))
+                entry.bind("<Return>", lambda e, name=field["name"], entry=entry: self._on_output_entry_change(name, entry))
+                continue
+            elif field["type"] == "number":
+                label = ttk.Label(self.output_fields_container, text=field["label"], style="Label.TLabel")
+                label.pack(anchor="w", padx=5, pady=(10, 5))
+                entry = ttk.Entry(self.output_fields_container, style="Entry.TEntry")
+                entry.insert(0, value)
+                entry.pack(fill="x", pady=(0, 10), padx=5)
+                self.output_config_fields[field["name"]] = entry
+                entry.bind("<FocusOut>", lambda e, name=field["name"], entry=entry: self._on_output_entry_change(name, entry))
+                entry.bind("<Return>", lambda e, name=field["name"], entry=entry: self._on_output_entry_change(name, entry))
+                continue
+            elif field["type"] == "display":
+                label = ttk.Label(self.output_fields_container, text=f"{field['label']}: {value}", style="Label.TLabel")
+                label.pack(anchor="w", padx=5, pady=(10, 5))
+                self.output_config_fields[field["name"]] = label
+                continue
+
+    def _on_output_entry_change(self, name, entry):
+        # Only update config for editable fields, never for display fields
+        manifest = self.loader.load_manifest(self.output_var.get())
+        field_type = None
+        if manifest:
+            for f in manifest.get('fields', []):
+                if f['name'] == name:
+                    field_type = f.get('type')
+                    break
+        if field_type == 'display':
+            return  # Never save display fields to config
+        value = entry.get()
+        self.output_config_memory[name] = value
+        if self.on_change_callback:
+            self.on_change_callback()
+
+    def on_output_change(self):
+        # Update output_config_memory for all fields, but skip display-only fields
+        for k, field in self.output_config_fields.items():
+            # Skip display fields (e.g., current_frame)
+            manifest = self.loader.load_manifest(self.output_var.get())
+            field_type = None
+            if manifest:
+                for f in manifest.get('fields', []):
+                    if f['name'] == k:
+                        field_type = f.get('type')
+                        break
+            if field_type == 'display':
+                continue  # Never save display fields to config
+            if isinstance(field, dict) and "var" in field:
+                self.output_config_memory[k] = field["var"].get()
+            elif isinstance(field, tk.Entry):
+                self.output_config_memory[k] = field.get()
+        if self.output_instance and hasattr(self.output_instance, 'update_config'):
+            self.output_instance.update_config(self.get_output_config())
+        self.refresh_output_module_and_waveform()
+        self.update_input_modules_based_on_output()
+        if self.on_change_callback:
+            self.on_change_callback()
+
+    def get_output_config(self, include_all_fields=False):
+        # Always return the full memory-backed config
+        return self.output_config_memory.copy()
+
+    def sync_output_fields_to_config(self):
+        config = self.get_output_config()
+        for k, v in config.items():
+            field = self.output_config_fields.get(k)
+            if not field:
+                continue
+            # Handle dropdowns (combos)
+            if isinstance(field, dict) and "var" in field:
+                combo = field.get("combo")
+                if combo and v not in combo["values"]:
+                    values = list(combo["values"])
+                    values.append(v)
+                    combo["values"] = values
+                field["var"].set(v)
+            # Handle text entries
+            elif isinstance(field, tk.Entry):
+                field.delete(0, tk.END)
+                field.insert(0, v)
 
     def is_valid(self):
         return bool(self.input_var.get() and self.output_var.get())
@@ -268,216 +498,29 @@ class InteractionBlock:
             if hasattr(self.input_instance, 'update_config'):
                 self.input_instance.update_config(self.get_input_config())
 
-    def on_output_change(self):
-        """Called when an output field changes. Update output instance config and save config."""
-        # Only update output instance and save config, do not trigger redraw
-        if hasattr(self.parent, 'loading') and (self.parent.loading or getattr(self.parent, 'initializing', False)):
-            return
-        if self.output_instance and hasattr(self.output_instance, 'update_config'):
-            self.output_instance.update_config(self.get_output_config())
-        # Refresh waveform if file_path changed
-        self.refresh_output_module_and_waveform()
-        # Update available input modules based on output classification
-        self.update_input_modules_based_on_output()
-        # Save config only
-        if self.on_change_callback:
-            self.on_change_callback()
-    
-    def update_output_modules_based_on_input(self):
-        """
-        Update the available output modules based on the selected input module's classification and mode.
-        This ensures only compatible modules are shown in the output dropdown.
-        """
-        input_module = self.input_var.get()
-        if not input_module:
-            return
-        input_manifest = self.loader.load_manifest(input_module)
-        if not input_manifest:
-            return
-        input_classification = input_manifest.get('classification')
-        input_mode = input_manifest.get('mode')
-        if not input_classification and not input_mode:
-            output_modules = self.loader.get_modules_by_type("output")
-        else:
-            # Show only output modules with matching classification and mode
-            output_modules = []
-            for mod in self.loader.get_modules_by_type("output"):
-                manifest = self.loader.load_manifest(mod)
-                if not manifest:
-                    continue
-                if input_classification and manifest.get('classification') != input_classification:
-                    continue
-                if input_mode and manifest.get('mode') != input_mode:
-                    continue
-                output_modules.append(mod)
-        output_combo = self.frame.winfo_children()[1].winfo_children()[1].winfo_children()[1]
-        output_combo["values"] = output_modules
-        current_output = self.output_var.get()
-        if current_output and current_output not in output_modules:
-            self.output_var.set("")
-            self.output_instance = None
-
-    def update_input_modules_based_on_output(self):
-        """
-        Update the available input modules based on the selected output module's classification and mode.
-        This ensures only compatible modules are shown in the input dropdown.
-        """
-        output_module = self.output_var.get()
-        if not output_module:
-            return
-        output_manifest = self.loader.load_manifest(output_module)
-        if not output_manifest:
-            return
-        output_classification = output_manifest.get('classification')
-        output_mode = output_manifest.get('mode')
-        if not output_classification and not output_mode:
-            input_modules = self.loader.get_modules_by_type("input")
-        else:
-            # Show only input modules with matching classification and mode
-            input_modules = []
-            for mod in self.loader.get_modules_by_type("input"):
-                manifest = self.loader.load_manifest(mod)
-                if not manifest:
-                    continue
-                if output_classification and manifest.get('classification') != output_classification:
-                    continue
-                if output_mode and manifest.get('mode') != output_mode:
-                    continue
-                input_modules.append(mod)
-        # Use the direct reference to input_combo
-        try:
-            if hasattr(self, 'input_combo') and self.input_combo is not None:
-                self.input_combo["values"] = input_modules
-                current_input = self.input_var.get()
-                if current_input and current_input not in input_modules:
-                    self.input_var.set("")
-                    self.input_instance = None
-            else:
-                self.logger.verbose("⚠️ input_combo reference not found; cannot update input modules.")
-        except Exception as e:
-            self.logger.verbose(f"⚠️ Error updating input modules: {e}")
-
     def on_input_module_selected(self, event=None):
-        self.draw_input_fields()
-        self.update_output_modules_based_on_input()
-        # Start updating display for Clock module
-        if self.input_var.get() == "clock_input_trigger":
-            # Register event callback for clock updates
-            def clock_event_callback(data):
-                # Update current time and countdown labels
-                current_time_label = self.input_config_fields.get('current_time')
-                countdown_label = self.input_config_fields.get('countdown')
-                if current_time_label:
-                    current_time = data.get('current_time', '--:--:--')
-                    self.frame.after(0, lambda: current_time_label.config(text=f"Current Time: {current_time}") if current_time_label.winfo_exists() else None)
-                if countdown_label:
-                    countdown = data.get('countdown', '--:--:--')
-                    self.frame.after(0, lambda: countdown_label.config(text=f"Time Until Target: {countdown}") if countdown_label.winfo_exists() else None)
-            try:
-                self.input_instance = self.loader.create_module_instance(
-                    self.input_var.get(),
-                    self.get_input_config(),
-                    log_callback=self.logger.verbose
-                )
-                self.input_instance.add_event_callback(clock_event_callback)
-                self.input_instance.start()
-            except Exception as e:
-                self.logger.verbose(f"⚠️ Failed to create clock input instance: {e}")
-        elif self.input_var.get() == "serial_input_streaming":
-            # Register event callback for serial input updates
-            def serial_event_callback(data):
-                connection_status_label = self.input_config_fields.get('connection_status')
-                incoming_data_label = self.input_config_fields.get('incoming_data')
-                if connection_status_label:
-                    status = data.get('connection_status', 'Disconnected')
-                    self.frame.after(0, lambda: connection_status_label.config(text=f"Connection Status: {status}") if connection_status_label.winfo_exists() else None)
-                if incoming_data_label:
-                    value = data.get('value', 'No data received')
-                    self.frame.after(0, lambda: incoming_data_label.config(text=f"Incoming Data: {value}") if incoming_data_label.winfo_exists() else None)
-            try:
-                self.input_instance = self.loader.create_module_instance(
-                    self.input_var.get(),
-                    self.get_input_config(),
-                    log_callback=self.logger.verbose
-                )
-                self.input_instance.add_event_callback(serial_event_callback)
-                self.input_instance.start()
-            except Exception as e:
-                self.logger.verbose(f"⚠️ Failed to create serial input instance: {e}")
-        elif self.input_var.get() == "serial_input_trigger":
-            # Register event callback for serial trigger updates
-            def serial_trigger_event_callback(data):
-                connection_status_label = self.input_config_fields.get('connection_status')
-                current_value_label = self.input_config_fields.get('current_value')
-                trigger_status_label = self.input_config_fields.get('trigger_status')
-                if connection_status_label:
-                    status = data.get('connection_status', 'Disconnected')
-                    self.frame.after(0, lambda: connection_status_label.config(text=f"Connection Status: {status}") if connection_status_label.winfo_exists() else None)
-                if current_value_label:
-                    value = data.get('value', 'No data')
-                    self.frame.after(0, lambda: current_value_label.config(text=f"Value: {value}") if current_value_label.winfo_exists() else None)
-                if trigger_status_label:
-                    status = data.get('trigger_status', 'Waiting')
-                    self.frame.after(0, lambda: trigger_status_label.config(text=f"Trigger Status: {status}") if trigger_status_label.winfo_exists() else None)
-            try:
-                self.input_instance = self.loader.create_module_instance(
-                    self.input_var.get(),
-                    self.get_input_config(),
-                    log_callback=self.logger.verbose
-                )
-                self.input_instance.add_event_callback(serial_trigger_event_callback)
-                self.input_instance.start()
-            except Exception as e:
-                self.logger.verbose(f"⚠️ Failed to create serial trigger input instance: {e}")
-        elif self.input_var.get() == "sacn_frames_input_trigger":
-            # Register event callback for sACN frames updates
-            def sacn_event_callback(data):
-                frame_number_label = self.input_config_fields.get('frame_number')
-                if frame_number_label:
-                    frame_number = data.get('frame_number', 'No frame received')
-                    self.frame.after(0, lambda: frame_number_label.config(text=f"Frame Number: {frame_number}") if frame_number_label.winfo_exists() else None)
-            try:
-                self.input_instance = self.loader.create_module_instance(
-                    self.input_var.get(),
-                    self.get_input_config(),
-                    log_callback=self.logger.verbose
-                )
-                self.input_instance.add_event_callback(sacn_event_callback)
-                self.input_instance.start()
-            except Exception as e:
-                self.logger.verbose(f"⚠️ Failed to create sACN frames input instance: {e}")
-        elif self.input_var.get() == "frames_input_streaming":
-            # Register event callback for frames input updates
-            def frames_event_callback(data):
-                frame_number_label = self.input_config_fields.get('frame_number')
-                if frame_number_label:
-                    value = data.get('value', 'No frame received')
-                    if not self.frame_received_once:
-                        self.frame_received_once = True
-                    self.frame_last_value = value
-                    self.frame.after(0, lambda: frame_number_label.config(text=f"Frame Number: {value}") if frame_number_label.winfo_exists() else None)
-            try:
-                self.input_instance = self.loader.create_module_instance(
-                    self.input_var.get(),
-                    self.get_input_config(),
-                    log_callback=self.logger.verbose
-                )
-                self.input_instance.add_event_callback(frames_event_callback)
-                self.input_instance.start()
-            except Exception as e:
-                self.logger.verbose(f"⚠️ Failed to create frames_input_streaming input instance: {e}")
-        else:
-            try:
-                current_module_name = self.input_var.get()
-                current_config = self.get_input_config()
-                self.input_instance = self.loader.create_module_instance(
-                    current_module_name,
-                    current_config,
-                    log_callback=self.logger.verbose
-                )
-                self.connect_modules()
-            except Exception as e:
-                self.logger.verbose(f"⚠️ Failed to create input instance: {e}")
+        if hasattr(self, 'frame') and self.frame:
+            self.frame.destroy()
+        new_input_module = self.input_var.get()
+        new_preset = {
+            "input": {"module": new_input_module, "config": {}},
+            "output": {"module": self.output_var.get(), "config": self.output_config_memory.copy()}
+        }
+        self.preset = new_preset
+        self._initialized = False
+        self.initialize_from_preset()
+
+    def on_output_module_selected(self, event=None):
+        if hasattr(self, 'frame') and self.frame:
+            self.frame.destroy()
+        new_output_module = self.output_var.get()
+        new_preset = {
+            "input": {"module": self.input_var.get(), "config": self.get_input_config()},
+            "output": {"module": new_output_module, "config": {}}
+        }
+        self.preset = new_preset
+        self._initialized = False
+        self.initialize_from_preset()
 
     def start_clock_display_update(self):
         """[REMOVED] Polling-based clock display update. Use event-driven updates instead."""
@@ -671,7 +714,7 @@ class InteractionBlock:
         ttk.Label(output_frame, text="Module:", style="Label.TLabel").pack(anchor="w", padx=10, pady=(10, 5))
         output_combo = ttk.Combobox(output_frame, textvariable=self.output_var, state="readonly", style="Combo.TCombobox")
         output_combo.pack(fill="x", padx=10, pady=(0, 10))
-        output_combo.bind("<<ComboboxSelected>>", self.draw_output_fields)
+        output_combo.bind("<<ComboboxSelected>>", self.on_output_module_selected)
 
         # Populate output modules (raw names only)
         output_modules = self.loader.get_modules_by_type("output")
@@ -684,9 +727,12 @@ class InteractionBlock:
         control_frame = ttk.LabelFrame(content_frame, text="Controls", style="Section.TLabelframe")
         control_frame.pack(side="left", fill="y", padx=(5, 0))
 
-        # Trigger button
-        ttk.Button(control_frame, text="▶ Trigger", command=self.trigger_output, 
-                  style="Action.TButton").pack(padx=10, pady=(20, 10), fill="x")
+        # Only show trigger button for 'trigger' or 'adaptive' output modules
+        output_module = self.output_var.get()
+        manifest = self.loader.load_manifest(output_module)
+        if manifest and manifest.get("classification", "") in ["trigger", "adaptive"]:
+            ttk.Button(control_frame, text="▶ Trigger", command=self.trigger_output, 
+                       style="Action.TButton").pack(padx=10, pady=(20, 10), fill="x")
         
         # Remove button (in control section)
         ttk.Button(control_frame, text="🗑 Remove", command=self.remove_self, 
@@ -897,6 +943,7 @@ class InteractionBlock:
                 address = config.get("address", "/trigger")
                 key = ("osc_input_trigger", {"port": port, "address": address})
                 def block_event_callback(data):
+                    self.update_fields_from_event(data, field_type='input')
                     self.connect_modules()
                     if self.output_instance:
                         self.output_instance.handle_event(data)
@@ -923,77 +970,44 @@ class InteractionBlock:
             elif module_name == "clock_input_trigger":
                 # Handle Clock input module
                 def block_event_callback(data):
+                    self.update_fields_from_event(data, field_type='input')
                     self.logger.verbose(f"🔔 Clock event received: {data}")
-                    # Direct connection to output module for Clock
-                    if self.logger.level == "verbose":
-                        self.logger.verbose(f"🔍 Clock: Checking output_instance - {self.output_instance}")
-                    if self.output_instance:
+                    current_time_label = self.input_config_fields.get('current_time')
+                    countdown_label = self.input_config_fields.get('countdown')
+                    if current_time_label:
+                        current_time = data.get('current_time', '--:--:--')
+                        self.frame.after(0, lambda: current_time_label.config(text=f"Current Time: {current_time}") if current_time_label.winfo_exists() else None)
+                    if countdown_label:
+                        countdown = data.get('countdown', '--:--:--')
+                        self.frame.after(0, lambda: countdown_label.config(text=f"Time Until Target: {countdown}") if countdown_label.winfo_exists() else None)
+                    if data.get('trigger', False):
                         if self.logger.level == "verbose":
-                            self.logger.verbose(f"🔍 Clock: Output instance type: {type(self.output_instance)}")
-                        # Update output instance with current config
-                        if hasattr(self.output_instance, "update_config"):
+                            self.logger.verbose(f"🔔 Clock: Trigger event, sending to output_instance")
+                        if self.output_instance:
+                            if hasattr(self.output_instance, "update_config"):
+                                self.output_instance.update_config(self.get_output_config())
+                            if hasattr(self.output_instance, "set_cursor_callback"):
+                                self.output_instance.set_cursor_callback(self.start_audio_playback)
+                            self.output_instance.handle_event(data)
                             if self.logger.level == "verbose":
-                                self.logger.verbose(f"🔍 Clock: Updating output config")
-                            self.output_instance.update_config(self.get_output_config())
-                        # Ensure cursor callback is set
-                        if hasattr(self.output_instance, "set_cursor_callback"):
+                                self.logger.verbose(f"✅ Clock: handle_event call completed")
+                        else:
                             if self.logger.level == "verbose":
-                                self.logger.verbose(f"🔍 Clock: Setting cursor callback")
-                            self.output_instance.set_cursor_callback(self.start_audio_playback)
-                        # Ensure output instance is started
-                        if hasattr(self.output_instance, "start"):
-                            if self.logger.level == "verbose":
-                                self.logger.verbose(f"🔍 Clock: Starting output instance")
-                            self.output_instance.start()
-                        # Send event to output
-                        if self.logger.level == "verbose":
-                            self.logger.verbose(f"📤 Clock: Calling output_instance.handle_event(data)")
-                        self.output_instance.handle_event(data)
-                        if self.logger.level == "verbose":
-                            self.logger.verbose(f"✅ Clock: handle_event call completed")
-                    else:
-                        if self.logger.level == "verbose":
-                            self.logger.verbose(f"⚠️ Clock: No output instance to send event to")
-                
-                try:
-                    self.input_instance = self.loader.create_module_instance(
-                        module_name,
-                        config,
-                        log_callback=self.logger.verbose
-                    )
-                    # Add the event callback directly to the Clock module
-                    self.input_instance.add_event_callback(block_event_callback)
-                    if self.logger.level == "verbose":
-                        self.logger.verbose(f"🔗 Clock: Added event callback to module")
-                    
-                    self.input_instance.start()
-                    if self.logger.level == "verbose":
-                        self.logger.verbose(f"🚀 Clock: Module started")
-                    # Start the display update immediately
-                    self.start_clock_display_update()
-                except Exception as e:
-                    self.logger.verbose(f"⚠️ Failed to create clock input instance: {e}")
+                                self.logger.verbose(f"⚠️ Clock: No output instance to send event to")
             elif module_name == "serial_input_streaming":
                 # Handle Serial input module
                 def block_event_callback(data):
+                    self.update_fields_from_event(data, field_type='input')
                     self.logger.verbose(f"📡 Serial event received: {data}")
-                    # Update the incoming data label immediately
                     incoming_data_label = self.input_config_fields.get('incoming_data')
                     if incoming_data_label:
                         value = data.get('value', 'No data received')
                         incoming_data_label.config(text=f"Incoming Data: {value}")
-                    # Direct connection to output module for Serial
                     if self.output_instance:
-                        # Update output instance with current config
                         if hasattr(self.output_instance, "update_config"):
                             self.output_instance.update_config(self.get_output_config())
-                        # Ensure cursor callback is set
                         if hasattr(self.output_instance, "set_cursor_callback"):
                             self.output_instance.set_cursor_callback(self.start_audio_playback)
-                        # Ensure output instance is started
-                        if hasattr(self.output_instance, "start"):
-                            self.output_instance.start()
-                        # Send event to output
                         self.output_instance.handle_event(data)
                     else:
                         self.logger.verbose(f"⚠️ Serial: No output instance to send event to")
@@ -1017,8 +1031,8 @@ class InteractionBlock:
             elif module_name == "serial_input_trigger":
                 # Handle Serial Trigger input module
                 def block_event_callback(data):
+                    self.update_fields_from_event(data, field_type='input')
                     self.logger.verbose(f"🎯 Serial trigger event received: {data}")
-                    # Update the current value label immediately, thread-safe
                     current_value_label = self.input_config_fields.get('current_value')
                     if current_value_label and self.input_instance:
                         value = data.get('value', 'No data')
@@ -1036,9 +1050,6 @@ class InteractionBlock:
                             # Ensure cursor callback is set
                             if hasattr(self.output_instance, "set_cursor_callback"):
                                 self.output_instance.set_cursor_callback(self.start_audio_playback)
-                            # Ensure output instance is started
-                            if hasattr(self.output_instance, "start"):
-                                self.output_instance.start()
                             # Send event to output
                             self.output_instance.handle_event(data)
                             self.logger.verbose(f"🎯 Serial trigger: Sent event to output module")
@@ -1066,8 +1077,8 @@ class InteractionBlock:
             elif module_name == "sacn_frames_input_trigger":
                 # Handle sACN Frames input module
                 def block_event_callback(data):
+                    self.update_fields_from_event(data, field_type='input')
                     self.logger.verbose(f"🎬 sACN frame event received: {data}")
-                    # Update the frame number label immediately, thread-safe
                     frame_number_label = self.input_config_fields.get('frame_number')
                     if frame_number_label and self.input_instance:
                         frame_number = data.get('frame_number', 0)
@@ -1084,9 +1095,6 @@ class InteractionBlock:
                             # Ensure cursor callback is set
                             if hasattr(self.output_instance, "set_cursor_callback"):
                                 self.output_instance.set_cursor_callback(self.start_audio_playback)
-                            # Ensure output instance is started
-                            if hasattr(self.output_instance, "start"):
-                                self.output_instance.start()
                             # Send event to output
                             self.output_instance.handle_event(data)
                             self.logger.verbose(f"🎬 sACN: Sent event to output module")
@@ -1111,44 +1119,76 @@ class InteractionBlock:
                     self.start_sacn_frames_display_update()
                 except Exception as e:
                     self.logger.verbose(f"⚠️ Failed to create sACN frames input instance: {e}")
-            elif module_name == "frames_input_streaming":
-                # Handle frames_input_streaming input module
+            elif module_name == "frames_input_trigger":
+                # Handle frames input module
                 def block_event_callback(data):
-                    self.logger.verbose(f"📡 frames_input_streaming event received: {data}")
+                    self.update_fields_from_event(data, field_type='input')
+                    self.logger.verbose(f"🎬 Frames input event received: {data}")
                     frame_number_label = self.input_config_fields.get('frame_number')
-                    if frame_number_label:
-                        value = data.get('value', 'No frame received')
-                        self.logger.verbose(f"[DEBUG] Updating frame number label to: {value}")
-                        self.frame.after(0, lambda: frame_number_label.config(text=f"Frame Number: {value}") if frame_number_label.winfo_exists() else None)
-                    if self.output_instance:
-                        self.logger.verbose(f"[DEBUG] output_instance is: {self.output_instance} (type: {type(self.output_instance)})")
-                        if hasattr(self.output_instance, "update_config"):
-                            self.logger.verbose(f"[DEBUG] Calling update_config on output_instance")
-                            self.output_instance.update_config(self.get_output_config())
-                        if hasattr(self.output_instance, "set_cursor_callback"):
-                            self.logger.verbose(f"[DEBUG] Setting cursor callback on output_instance")
-                            self.output_instance.set_cursor_callback(self.start_audio_playback)
-                        if hasattr(self.output_instance, "start"):
-                            self.logger.verbose(f"[DEBUG] Starting output_instance")
-                            self.output_instance.start()
-                        self.logger.verbose(f"[DEBUG] Calling handle_event on output_instance with data: {data}")
-                        self.output_instance.handle_event(data)
-                        self.logger.verbose(f"[DEBUG] Called handle_event on output_instance")
+                    if frame_number_label and self.input_instance:
+                        frame_number = data.get('frame_number', 0)
+                        self.frame.after(0, lambda: frame_number_label.config(text=f"Frame Number: {frame_number}") if frame_number_label.winfo_exists() else None)
+                    # Send triggers to the output module
+                    if data.get('trigger', False):
+                        self.logger.verbose(f"🎬 Frames input: Processing trigger event")
+                        if self.output_instance:
+                            if hasattr(self.output_instance, "update_config"):
+                                self.output_instance.update_config(self.get_output_config())
+                            if hasattr(self.output_instance, "set_cursor_callback"):
+                                self.output_instance.set_cursor_callback(self.start_audio_playback)
+                            self.output_instance.handle_event(data)
+                            self.logger.verbose(f"🎬 Frames input: Sent event to output module")
+                        else:
+                            self.logger.verbose(f"⚠️ Frames input: No output instance to send event to")
                     else:
-                        self.logger.verbose(f"⚠️ frames_input_streaming: No output instance to send event to")
+                        self.logger.verbose(f"🎬 Frames input: Non-trigger event (GUI update only)")
                 try:
-                    # Always create, add callback, and start in this order
+                    self.input_instance = self.loader.create_module_instance(
+                        module_name,
+                        config,
+                        log_callback=self.logger.verbose
+                    )
+                    self.input_instance.add_event_callback(block_event_callback)
+                    self.logger.verbose(f"🔗 Frames input: Added event callback to module")
+                    self.input_instance.start()
+                    self.logger.verbose(f"🚀 Frames input: Module started")
+                except Exception as e:
+                    self.logger.verbose(f"⚠️ Failed to create frames input instance: {e}")
+            elif module_name == "time_input_trigger":
+                # Handle Time input module
+                def block_event_callback(data):
+                    self.update_fields_from_event(data, field_type='input')
+                    self.logger.verbose(f"🔔 Time event received: {data}")
+                    current_time_label = self.input_config_fields.get('current_time')
+                    countdown_label = self.input_config_fields.get('countdown')
+                    if current_time_label:
+                        current_time = data.get('current_time', '--:--:--')
+                        self.frame.after(0, lambda: current_time_label.config(text=f"Current Time: {current_time}") if current_time_label.winfo_exists() else None)
+                    if countdown_label:
+                        countdown = data.get('countdown', '--:--:--')
+                        self.frame.after(0, lambda: countdown_label.config(text=f"Time Until Target: {countdown}") if countdown_label.winfo_exists() else None)
+                    # --- Patch: On trigger, send event to output module ---
+                    if data.get('trigger', False):
+                        self.logger.verbose(f"🔔 Time: Trigger event, sending to output_instance")
+                        if self.output_instance:
+                            if hasattr(self.output_instance, "update_config"):
+                                self.output_instance.update_config(self.get_output_config())
+                            if hasattr(self.output_instance, "set_cursor_callback"):
+                                self.output_instance.set_cursor_callback(self.start_audio_playback)
+                            self.output_instance.handle_event(data)
+                            self.logger.verbose(f"✅ Time: handle_event call completed")
+                        else:
+                            self.logger.verbose(f"⚠️ Time: No output instance to send event to")
+                try:
                     self.input_instance = self.loader.create_module_instance(
                         self.input_var.get(),
                         self.get_input_config(),
                         log_callback=self.logger.verbose
                     )
-                    self.input_instance.add_event_callback(block_event_callback)
-                    self.logger.verbose(f"🔗 frames_input_streaming: Added event callback to module (id: {id(self.input_instance)})")
+                    self.input_instance.add_event_callback(self.time_event_callback)
                     self.input_instance.start()
-                    self.logger.verbose(f"🚀 frames_input_streaming: Module started (id: {id(self.input_instance)})")
                 except Exception as e:
-                    self.logger.verbose(f"⚠️ Failed to create frames_input_streaming input instance: {e}")
+                    self.logger.verbose(f"⚠️ Failed to create time input instance: {e}")
             else:
                 try:
                     current_module_name = self.input_var.get()
@@ -1184,15 +1224,14 @@ class InteractionBlock:
             self.on_change_callback()
 
     def update_input_instance_with_new_target_time(self, target_time):
-        """Update the Clock module's target time."""
-        if self.input_var.get() == "clock_input_trigger":
+        """Update the Time module's target time."""
+        if self.input_var.get() == "time_input_trigger":
             # Update the module's config directly
             if self.input_instance and hasattr(self.input_instance, 'update_config'):
                 config = self.get_input_config()
                 config["target_time"] = target_time
                 self.input_instance.update_config(config)
-                self.logger.verbose(f"⚙️ Clock module config updated: target_time = {target_time}")
-            # Trigger config save
+                self.logger.verbose(f"⚙️ Time module config updated: target_time = {target_time}")
             if self.on_change_callback:
                 self.on_change_callback()
 
@@ -1292,6 +1331,7 @@ class InteractionBlock:
         if module_name == "osc_input_trigger":
             key = ("osc_input_trigger", {"port": port, "address": address})
             def block_event_callback(data):
+                self.update_fields_from_event(data, field_type='input')
                 self.connect_modules()
                 if self.output_instance:
                     self.output_instance.handle_event(data)
@@ -1364,6 +1404,17 @@ class InteractionBlock:
             # Set up cursor callback for audio output
             if hasattr(self.output_instance, 'set_cursor_callback'):
                 self.output_instance.set_cursor_callback(self.start_audio_playback)
+            
+            # Set input classification for adaptive output modules
+            if hasattr(self.output_instance, "set_input_classification"):
+                input_module = self.input_var.get()
+                if input_module:
+                    input_manifest = self.loader.load_manifest(input_module)
+                    if input_manifest:
+                        input_classification = input_manifest.get("classification", "unknown")
+                        self.output_instance.set_input_classification(input_classification)
+                        self.logger.verbose(f"🔗 Set input classification '{input_classification}' for adaptive output module")
+            
             self._output_initialized = True  # Mark output as initialized
             self._last_output_module = module_name
         except Exception as e:
@@ -1416,621 +1467,6 @@ class InteractionBlock:
                 protocol_fields.append(field)
         
         return protocol_fields
-
-    def draw_output_fields(self, event=None):
-        for widget in self.output_fields_container.winfo_children():
-            widget.destroy()
-
-        module_name = self.output_var.get()
-        manifest = self.loader.load_manifest(module_name)
-        if manifest is None:
-            # handle error or skip
-            return
-
-        # Only reset output instance creation flag if module changes
-        if self._last_output_module != module_name:
-            self._output_initialized = False
-            self._last_output_module = module_name
-
-        # Get current protocol for dynamic field filtering
-        current_config = self.get_output_config()
-        current_protocol = current_config.get('protocol', 'sacn')
-        
-        # Get protocol-dependent fields
-        fields = self.get_protocol_dependent_fields(manifest, current_protocol)
-        self.output_config_fields = {}
-        
-        for field in fields:
-            # Additional filtering for non-protocol conditions
-            if not self.should_show_field(field, current_config):
-                continue
-            if field["type"] == "button":
-                action = field.get("action", field["name"])
-                button = ttk.Button(self.output_fields_container, text=field["label"], 
-                                  command=lambda name=action: self.handle_button_action(name), style="Action.TButton")
-                button.pack(fill="x", pady=5, padx=5)
-                continue
-            if field["type"] == "waveform":
-                # Create a label for the waveform, store reference for later update
-                waveform_label = ttk.Label(self.output_fields_container, text="Waveform", style="Label.TLabel")
-                waveform_label.pack(anchor="w", padx=5, pady=(10, 5))
-                waveform_label_ref = waveform_label
-                # Create waveform container
-                waveform_container = ttk.Frame(self.output_fields_container, style="Fields.TFrame")
-                waveform_container.pack(fill="x", pady=(0, 10), padx=5)
-                # Create canvas for waveform
-                waveform_canvas = tk.Canvas(waveform_container, width=300, height=60, bg="#111", highlightthickness=0)
-                waveform_canvas.pack(fill="x")
-                # Create transparent cursor canvas that overlays the waveform
-                cursor_canvas = tk.Canvas(waveform_container, width=300, height=60, highlightthickness=0)
-                cursor_canvas.place(in_=waveform_container, x=0, y=0, relwidth=1, relheight=1)
-                self.output_config_fields[field["name"]] = {
-                    "waveform": waveform_canvas,
-                    "cursor": cursor_canvas,
-                    "container": waveform_container,
-                    "label": waveform_label,  # Store label reference
-                    "start_time": None,
-                    "duration": None,
-                    "is_playing": False
-                }
-                continue
-
-            if field["type"] == "slider":
-                label = ttk.Label(self.output_fields_container, text=field["label"], style="Label.TLabel")
-                label.pack(anchor="w", padx=5, pady=(10, 5))
-                
-                # Create slider frame
-                slider_frame = ttk.Frame(self.output_fields_container, style="Fields.TFrame")
-                slider_frame.pack(fill="x", pady=(0, 10), padx=5)
-                
-                slider_var = tk.DoubleVar(value=field.get("default", 50))
-                slider = ttk.Scale(slider_frame, from_=field.get("min", 0), to=field.get("max", 100), 
-                                 variable=slider_var, orient="horizontal", command=lambda v, f=field: self.on_slider_change(f, v))
-                slider.pack(side="left", fill="x", expand=True)
-                
-                value_label = ttk.Label(slider_frame, text=f"{int(slider_var.get())}", style="Label.TLabel")
-                value_label.pack(side="right", padx=(10, 0))
-                
-                self.output_config_fields[field["name"]] = {
-                    "slider": slider,
-                    "var": slider_var,
-                    "label": value_label
-                }
-                continue
-            elif field["type"] == "select":
-                # Handle dropdown/select fields
-                label = ttk.Label(self.output_fields_container, text=field["label"], style="Label.TLabel")
-                label.pack(anchor="w", padx=5, pady=(10, 5))
-                
-                # Get options for the dropdown
-                options = field.get("options", [])
-                option_values = [opt.get("value", opt.get("label", "")) for opt in options]
-                option_labels = [opt.get("label", opt.get("value", "")) for opt in options]
-                
-                # Special handling for serial port dropdown
-                if field["name"] == "serial_port" and self.output_instance and hasattr(self.output_instance, "get_field_options"):
-                    try:
-                        available_ports = self.output_instance.get_field_options("serial_port")
-                        if available_ports:
-                            option_values = available_ports
-                            option_labels = available_ports
-                    except Exception as e:
-                        self.logger.verbose(f"⚠️ Error getting serial ports: {e}")
-                        if not option_values:
-                            option_values = ["COM1", "COM2", "COM3", "COM4"]
-                            option_labels = ["COM1", "COM2", "COM3", "COM4"]
-                
-                # Create combobox
-                # Use current config value if available, otherwise use default
-                current_value = current_config.get(field["name"], field.get("default", ""))
-                # Find the label for the current value
-                current_label = current_value
-                if "value_map" in dict(zip(option_labels, option_values)):
-                    value_map = dict(zip(option_labels, option_values))
-                    # Find the label that corresponds to the current value
-                    for label, value in value_map.items():
-                        if value == current_value:
-                            current_label = label
-                            break
-                
-                combo_var = tk.StringVar(value=current_label)
-                combo = ttk.Combobox(self.output_fields_container, textvariable=combo_var, 
-                                   values=option_labels, state="readonly", style="Combo.TCombobox")
-                combo.pack(fill="x", pady=(0, 10), padx=5)
-                
-                # Store the mapping between labels and values
-                self.output_config_fields[field["name"]] = {
-                    "combo": combo,
-                    "var": combo_var,
-                    "value_map": dict(zip(option_labels, option_values))
-                }
-                
-                # Bind change events for protocol selection
-                if field["name"] == "protocol":
-                    def on_protocol_change(event=None, self=self, combo_var=combo_var):
-                        value = combo_var.get()
-                        if value:
-                            # Find the corresponding value
-                            field_widget = self.output_config_fields[field["name"]]
-                            if isinstance(field_widget, dict) and "value_map" in field_widget:
-                                value_map = field_widget["value_map"]
-                                protocol_value = value_map.get(value, value)
-                            else:
-                                protocol_value = value
-                            
-                            # Update config and redraw fields
-                            config = self.get_output_config()
-                            config["protocol"] = protocol_value
-                            if self.output_instance and hasattr(self.output_instance, "update_config"):
-                                self.output_instance.update_config(config)
-                            # Redraw fields to show/hide conditional ones
-                            self.draw_output_fields()
-                            # Save config
-                            if self.on_change_callback:
-                                self.on_change_callback()
-                    combo.bind("<<ComboboxSelected>>", on_protocol_change)
-                # --- PATCH: Add change event for serial_port field ---
-                elif field["name"] == "serial_port":
-                    def on_serial_port_change(event=None, self=self, combo_var=combo_var):
-                        value = combo_var.get()
-                        if value:
-                            # Find the corresponding value
-                            field_widget = self.output_config_fields[field["name"]]
-                            if isinstance(field_widget, dict) and "value_map" in field_widget:
-                                value_map = field_widget["value_map"]
-                                serial_port_value = value_map.get(value, value)
-                            else:
-                                serial_port_value = value
-                            # Update config
-                            config = self.get_output_config()
-                            config["serial_port"] = serial_port_value
-                            if self.output_instance and hasattr(self.output_instance, "update_config"):
-                                self.output_instance.update_config(config)
-                            # Save config
-                            if self.on_change_callback:
-                                self.on_change_callback()
-                    combo.bind("<<ComboboxSelected>>", on_serial_port_change)
-                else:
-                    combo.bind("<<ComboboxSelected>>", lambda e: self.on_input_change())
-                
-                self.output_config_fields[field["name"]] = {
-                    "combo": combo,
-                    "var": combo_var,
-                    "value_map": dict(zip(option_labels, option_values))
-                }
-                continue
-            elif field["type"] == "file":
-                # Handle file upload fields
-                label = ttk.Label(self.output_fields_container, text=field["label"], style="Label.TLabel")
-                label.pack(anchor="w", padx=5, pady=(10, 5))
-                
-                # Create file selection frame
-                file_frame = ttk.Frame(self.output_fields_container, style="Fields.TFrame")
-                file_frame.pack(fill="x", pady=(0, 10), padx=5)
-                
-                entry = ttk.Entry(file_frame, style="Entry.TEntry")
-                entry.insert(0, field.get("default", ""))
-                entry.pack(side="left", fill="x", expand=True)
-                
-                # Create browse button
-                file_types = field.get("file_types", [])
-                file_type_str = " ".join([f"*{ext}" for ext in file_types]) if file_types else "*.*"
-                button = ttk.Button(file_frame, text="Browse", 
-                                  command=lambda e=entry, ft=file_type_str: self.browse_csv_file(e, ft))
-                button.pack(side="right", padx=(5, 0))
-                
-                self.output_config_fields[field["name"]] = entry
-                continue
-            elif field["type"] == "display":
-                # Create display label (read-only)
-                label = ttk.Label(self.output_fields_container, text=field.get("default", "No data"), style="Label.TLabel")
-                label.pack(anchor="w", padx=5, pady=(10, 5))
-                
-                self.output_config_fields[field["name"]] = label
-                continue
-
-            label = ttk.Label(self.output_fields_container, text=field["label"], style="Label.TLabel")
-            label.pack(anchor="w", padx=5, pady=(10, 5))
-            entry = ttk.Entry(self.output_fields_container, style="Entry.TEntry")
-            entry.insert(0, field.get("default", ""))
-            entry.pack(fill="x", pady=(0, 10), padx=5)
-
-            # Trigger GUI save + waveform refresh on change
-            entry.bind("<KeyRelease>", lambda e: (self.on_output_change(), self.refresh_output_module_and_waveform()))
-            self.output_config_fields[field["name"]] = entry
-
-            if field["name"] == "file_path":
-                entry.bind("<Double-Button-1>", lambda e, ent=entry: self.browse_file(ent))
-                # Also trigger waveform generation when the file path changes
-                entry.bind("<KeyRelease>", lambda e: self.on_file_path_change())
-            elif field["name"] == "ip_address":
-                def on_ip_change(event=None, self=self, entry=entry):
-                    value = entry.get()
-                    if value:
-                        self.update_output_instance_with_new_ip(value)
-                entry.bind("<FocusOut>", on_ip_change)
-                entry.bind("<Return>", on_ip_change)
-            elif field["name"] == "port":
-                def on_port_change(event=None, self=self, entry=entry):
-                    value = entry.get()
-                    try:
-                        port = int(value)
-                        self.update_output_instance_with_new_port(port)
-                    except ValueError:
-                        pass
-                entry.bind("<FocusOut>", on_port_change)
-                entry.bind("<Return>", on_port_change)
-            elif field["name"] == "osc_address":
-                def on_osc_address_change(event=None, self=self, entry=entry):
-                    value = entry.get()
-                    if value:
-                        self.update_output_instance_with_new_osc_address(value)
-                entry.bind("<FocusOut>", on_osc_address_change)
-                entry.bind("<Return>", on_osc_address_change)
-
-        # Start display updates for DMX output module
-        if module_name == "dmx_output_streaming":
-            self.start_dmx_display_update()
-
-        # Only create a new output instance if it doesn't exist or settings have changed
-        new_config = self.get_output_config()
-        needs_new_instance = (
-            not self.output_instance or
-            getattr(self.output_instance, 'config', None) != new_config or
-            getattr(self.output_instance, 'manifest', None) != manifest
-        )
-        if needs_new_instance and not self._output_initialized:
-            self.create_output_instance(module_name, manifest, new_config)
-
-    def refresh_protocol_fields(self):
-        """Refresh the output fields based on current protocol selection."""
-        if self.output_var.get() == "dmx_output_streaming":
-            self.draw_output_fields()
-
-    def refresh_output_module_and_waveform(self):
-        """Restore waveform rendering and keep cursor animation."""
-        self.logger.verbose(f"🔁 Refreshing waveform and canvas")
-        module_name = self.output_var.get()
-        config = self.get_output_config()
-        try:
-            file_path = config.get("file_path", "")
-            img_path = None
-            if file_path:
-                # Use static method for waveform generation
-                module_dir = os.path.join(os.path.dirname(__file__), 'modules', 'audio_output')
-                waveform_dir = os.path.join(module_dir, "waveform")
-                os.makedirs(waveform_dir, exist_ok=True)
-                filename = os.path.basename(file_path)
-                waveform_filename = f"{filename}.waveform.png"
-                img_path = os.path.join(waveform_dir, waveform_filename)
-                if not os.path.exists(img_path):
-                    AudioOutputModule.generate_waveform_static(file_path, img_path, log_callback=self.logger.verbose)
-            if img_path and os.path.isfile(img_path):
-                try:
-                    from PIL import Image, ImageTk
-                    img = Image.open(img_path)
-                    img = img.resize((300, 60))
-                    photo = ImageTk.PhotoImage(img)
-                    waveform_widget = self.output_config_fields.get("waveform")
-                    if waveform_widget and isinstance(waveform_widget, dict) and "waveform" in waveform_widget:
-                        waveform_canvas = waveform_widget["waveform"]
-                        waveform_canvas.delete("all")
-                        waveform_canvas.create_image(0, 0, anchor="nw", image=photo)
-                        waveform_canvas.image = photo  # Keep a reference
-                        waveform_canvas.configure(width=300, height=60)
-                        # Update the label using the persistent instance
-                        if "label" in waveform_widget and self.output_instance and hasattr(self.output_instance, "get_waveform_label"):
-                            waveform_widget["label"].config(text=self.output_instance.get_waveform_label())
-                        self.logger.verbose(f"✅ Waveform image loaded and displayed on canvas")
-                        # Also update cursor canvas size to match
-                        if "cursor" in waveform_widget:
-                            cursor_canvas = waveform_widget["cursor"]
-                            cursor_canvas.configure(width=300, height=60)
-                    else:
-                        self.logger.verbose(f"⚠️ No waveform widget found in output config fields")
-                except ImportError as e:
-                    self.logger.verbose(f"⚠️ PIL not available: {e}")
-                except Exception as e:
-                    self.logger.verbose(f"⚠️ Failed to load waveform image: {e}")
-            else:
-                # Set label using the persistent instance if available
-                waveform_widget = self.output_config_fields.get("waveform")
-                if waveform_widget and "label" in waveform_widget and self.output_instance and hasattr(self.output_instance, "get_waveform_label"):
-                    waveform_widget["label"].config(text=self.output_instance.get_waveform_label())
-                self.logger.verbose(f"⚠️ Waveform file not found: {img_path}")
-                if img_path:
-                    self.logger.verbose(f"💡 File exists: {os.path.exists(img_path)}")
-        except Exception as e:
-            self.logger.verbose(f"⚠️ Failed to refresh waveform: {e}")
-
-    def browse_file(self, entry_widget):
-        file_path = filedialog.askopenfilename(filetypes=[("Audio Files", "*.wav *.mp3 *.ogg")])
-        if file_path:
-            entry_widget.delete(0, tk.END)
-            entry_widget.insert(0, file_path)
-            self.logger.verbose(f"✅ File selected, refreshing waveform...")
-            # Update output_instance config before refreshing waveform
-            if self.output_instance and hasattr(self.output_instance, "update_config"):
-                self.output_instance.update_config(self.get_output_config())
-            # Refresh waveform after file selection
-            self.refresh_output_module_and_waveform()
-            # Save config only
-            if self.on_change_callback:
-                self.on_change_callback()
-    
-    def browse_csv_file(self, entry_widget, file_types):
-        file_path = filedialog.askopenfilename(filetypes=[("CSV Files", file_types)])
-        if file_path:
-            entry_widget.delete(0, tk.END)
-            entry_widget.insert(0, file_path)
-            self.logger.verbose(f"✅ CSV file selected: {file_path}")
-            # Update output_instance config
-            if self.output_instance and hasattr(self.output_instance, "update_config"):
-                self.output_instance.update_config(self.get_output_config())
-            # Save config
-            if self.on_change_callback:
-                self.on_change_callback()
-            
-    def on_file_path_change(self):
-        """Called when the file path is changed manually"""
-        self.logger.verbose(f"✅ File path changed, refreshing waveform...")
-        # Update output_instance config before refreshing waveform
-        if self.output_instance and hasattr(self.output_instance, "update_config"):
-            self.output_instance.update_config(self.get_output_config())
-        # Refresh waveform after manual path change
-        self.refresh_output_module_and_waveform()
-        # Save config only
-        if self.on_change_callback:
-            self.on_change_callback()
-
-    def trigger_output(self):
-        output_module = self.output_var.get()
-        if not output_module:
-            self.logger.verbose("⚠️ No output module selected")
-            return
-
-        if not self.output_instance:
-            self.logger.verbose("⚠️ No output instance available")
-            return
-
-        try:
-            # Use the existing output instance instead of creating a new one
-            self.logger.verbose(f"🔘 Manual trigger button pressed for {output_module}")
-            
-            # Update the output instance with current config
-            if hasattr(self.output_instance, "update_config"):
-                self.output_instance.update_config(self.get_output_config())
-            
-            # Ensure the output instance is started
-            if hasattr(self.output_instance, "start"):
-                self.output_instance.start()
-            
-            # Send a trigger event to the output module
-            # For trigger modules, send a trigger event
-            if "trigger" in output_module:
-                trigger_data = {"trigger": True}
-            else:
-                trigger_data = {"value": "manual_trigger"}
-            
-            self.output_instance.handle_event(trigger_data)
-            self.logger.verbose(f"✅ Manual trigger sent to {output_module}")
-            
-        except Exception as e:
-            self.logger.verbose(f"💥 Failed to trigger output: {e}")
-
-    def handle_button_action(self, name):
-        self.logger.verbose(f"🔘 Button action triggered: {name}")
-        
-        # Update input instance config before handling button action
-        if self.input_instance and hasattr(self.input_instance, "update_config"):
-            self.input_instance.update_config(self.get_input_config())
-            
-        if self.input_instance and hasattr(self.input_instance, "handle_button_action"):
-            self.input_instance.handle_button_action(name)
-            
-        # Update output instance config before handling button action  
-        if self.output_instance and hasattr(self.output_instance, "update_config"):
-            self.output_instance.update_config(self.get_output_config())
-            
-        if self.output_instance and hasattr(self.output_instance, "handle_button_action"):
-            self.output_instance.handle_button_action(name)
-
-    def to_dict(self):
-        return {
-            "input": {
-                "module": self.input_var.get(),
-                "config": self.get_input_config()
-            },
-            "output": {
-                "module": self.output_var.get(),
-                "config": self.get_output_config()
-            }
-        }
-
-    def load_from_preset(self, preset):
-        input_module = preset.get("input", {}).get("module", "")
-        output_module = preset.get("output", {}).get("module", "")
-
-        self.input_var.set(input_module)
-        self.output_var.set(output_module)
-
-        # --- Patch: Temporarily disable on_change_callback during initial field population ---
-        original_on_change_callback = self.on_change_callback
-        self.on_change_callback = None
-
-        # Load input module configuration
-        if self.loader.load_manifest(input_module) is not None:
-            self.draw_input_fields(create_instance=False)
-            for k, v in preset["input"].get("config", {}).items():
-                if k in self.input_config_fields:
-                    field = self.input_config_fields[k]
-                    if isinstance(field, tk.Entry):
-                        field.delete(0, tk.END)
-                        field.insert(0, v)
-                    elif isinstance(field, tk.StringVar):
-                        field.set(v)
-                    elif isinstance(field, dict) and "var" in field:
-                        field["var"].set(v)
-                    elif isinstance(field, dict) and "waveform" in field:
-                        pass
-                    else:
-                        self.logger.verbose(f"⚠️ Unknown field type for {k}: {type(field)}")
-        else:
-            self.logger.verbose(f"⚠️ Invalid input module: '{input_module}'")
-
-        # Load output module configuration
-        if self.loader.load_manifest(output_module) is not None:
-            # Draw output fields first to create the GUI widgets
-            self.draw_output_fields()
-            # Now populate ALL output fields from the config, even if hidden
-            output_config = dict(preset["output"].get("config", {}))
-            for k, v in output_config.items():
-                if k in self.output_config_fields:
-                    field = self.output_config_fields[k]
-                    if isinstance(field, tk.Entry):
-                        field.delete(0, tk.END)
-                        field.insert(0, v)
-                    elif isinstance(field, dict) and "var" in field:
-                        if "value_map" in field:
-                            value_map = field["value_map"];
-                            for label, value in value_map.items():
-                                if value == v:
-                                    field["var"].set(label)
-                                    break
-                            else:
-                                field["var"].set(v)
-                        else:
-                            field["var"].set(v)
-                    elif isinstance(field, dict) and "waveform" in field:
-                        pass
-                    else:
-                        self.logger.verbose(f"⚠️ Unknown field type for {k}: {type(field)}")
-            # --- Fix: Redraw output fields for protocol-dependent GUI ---
-            self.draw_output_fields()  # <-- This redraws based on protocol
-            # Set protocol-dependent fields again (they may have been recreated)
-            for k, v in output_config.items():
-                if k in self.output_config_fields:
-                    field = self.output_config_fields[k]
-                    if isinstance(field, tk.Entry):
-                        field.delete(0, tk.END)
-                        field.insert(0, v)
-                    elif isinstance(field, dict) and "var" in field:
-                        if "value_map" in field:
-                            value_map = field["value_map"];
-                            for label, value in value_map.items():
-                                if value == v:
-                                    field["var"].set(label)
-                                    break
-                            else:
-                                field["var"].set(v)
-                        else:
-                            field["var"].set(v)
-                    elif isinstance(field, dict) and "waveform" in field:
-                        pass
-                    else:
-                        self.logger.verbose(f"⚠️ Unknown field type for {k}: {type(field)}")
-            # After all fields are set, redraw protocol-dependent fields one more time to ensure GUI is correct
-            self.draw_output_fields()  # <-- Add this line to guarantee protocol GUI is correct
-            # After all fields are set, instantiate the output module with the full config
-            self.output_instance = self.loader.create_module_instance(
-                output_module,
-                self.get_output_config(include_all_fields=True),
-                log_callback=self.logger.verbose
-            )
-            if self.output_instance:
-                self.output_instance.start()
-            if hasattr(self.output_instance, 'set_cursor_callback'):
-                self.output_instance.set_cursor_callback(self.start_audio_playback)
-            self.connect_modules()
-            self.logger.verbose("✅ Refreshing waveform on startup...")
-            self.refresh_output_module_and_waveform()
-        else:
-            self.logger.verbose(f"⚠️ Invalid output module: '{output_module}'")
-
-        # --- Patch: Restore on_change_callback after initial field population ---
-        self.on_change_callback = original_on_change_callback
-
-    def get_input_config(self):
-        config = {}
-        for k, v in self.input_config_fields.items():
-            if isinstance(v, tk.Entry):
-                if k == "port":
-                    val = v.get()
-                    try:
-                        config[k] = int(val)
-                    except Exception:
-                        config[k] = val  # Keep as string if not valid
-                elif k == "address":
-                    config[k] = v.get()
-                elif k == "target_time":
-                    config[k] = v.get() # Keep as string
-                else:
-                    config[k] = v.get()
-            elif isinstance(v, tk.StringVar):
-                # Handle dropdown fields (StringVar)
-                config[k] = v.get()
-        return config
-
-    def get_output_config(self, include_all_fields=False):
-        config = {}
-        # Always include all config fields, not just visible ones
-        fields = self.output_config_fields.keys() if include_all_fields else self.output_config_fields.keys()
-        for k in fields:
-            v = self.output_config_fields[k]
-            if k == "waveform":
-                continue
-            try:
-                if isinstance(v, tk.Entry):
-                    if v.winfo_exists():
-                        config[k] = v.get()
-                    else:
-                        continue
-                elif isinstance(v, dict) and "var" in v:
-                    if "value_map" in v:
-                        label = v["var"].get()
-                        value_map = v["value_map"]
-                        config[k] = value_map.get(label, label)
-                    else:
-                        config[k] = v["var"].get()
-                else:
-                    if not hasattr(v, 'winfo_exists'):
-                        config[k] = v
-            except tk.TclError:
-                continue
-        return config
-        
-    def connect_modules(self):
-        """Connect input and output modules if both exist"""
-        if self.input_instance and self.output_instance:
-            # Create a dynamic callback that always uses current config
-            def dynamic_event_callback(data):
-                # Get current config from GUI
-                current_config = self.get_output_config()
-                
-                # Update output instance with current config
-                if self.output_instance and hasattr(self.output_instance, "update_config"):
-                    self.output_instance.update_config(current_config)
-                
-                # Ensure cursor callback is set on the output instance
-                if self.output_instance and hasattr(self.output_instance, "set_cursor_callback"):
-                    self.logger.verbose(f"🎵 Setting cursor callback on output instance")
-                    self.output_instance.set_cursor_callback(self.start_audio_playback)
-                else:
-                    self.logger.verbose(f"⚠️ Output instance or set_cursor_callback not available")
-                    
-                # Also ensure the output instance is started
-                if self.output_instance and hasattr(self.output_instance, "start"):
-                    self.output_instance.start()
-                    
-                # Call the output instance's handle_event
-                if self.output_instance:
-                    self.output_instance.handle_event(data)
-            
-            # Only call set_event_callback if it exists
-            if hasattr(self.input_instance, "set_event_callback"):
-                self.input_instance.set_event_callback(dynamic_event_callback)
-            else:
-                self.logger.verbose("⚠️ Input module does not support set_event_callback")
 
     def on_slider_change(self, field, value):
         """Called when a slider value changes"""
@@ -2120,20 +1556,219 @@ class InteractionBlock:
             try:
                 self.input_instance = self.loader.create_module_instance(
                     input_module, input_config, log_callback=self.logger.verbose)
+                if self.input_instance is not None and hasattr(self.input_instance, 'start'):
+                    self.input_instance.start()
             except Exception as e:
                 self.logger.verbose(f"⚠️ Failed to create input instance: {e}")
         if output_module:
             try:
                 self.output_instance = self.loader.create_module_instance(
                     output_module, output_config, log_callback=self.logger.verbose)
+                
+                # Set input classification for adaptive output modules
+                if hasattr(self.output_instance, "set_input_classification"):
+                    input_module = self.input_var.get()
+                    if input_module:
+                        input_manifest = self.loader.load_manifest(input_module)
+                        if input_manifest:
+                            input_classification = input_manifest.get("classification", "unknown")
+                            self.output_instance.set_input_classification(input_classification)
+                            self.logger.verbose(f"🔗 Set input classification '{input_classification}' for adaptive output module")
+                
+                if self.output_instance is not None and hasattr(self.output_instance, 'start'):
+                    self.output_instance.start()
             except Exception as e:
                 self.logger.verbose(f"⚠️ Failed to create output instance: {e}")
+        # Ensure event/callback registration and input→output connection
+        self.connect_modules()
     def enable_callbacks(self):
         # Enable callbacks for user changes after initialization
         if self.gui_ref is not None:
             self.on_change_callback = self.gui_ref.save_config
         else:
             self.on_change_callback = None
+
+    def on_event_received(self, data):
+        # Update GUI fields based on event data
+        # Example: update frame number, time, etc.
+        if 'frame_number' in data:
+            label = self.input_config_fields.get('frame_number')
+            if label:
+                value = data.get('frame_number', 'No frame received')
+                label.config(text=f"Frame Number: {value}")
+        if 'current_time' in data:
+            label = self.input_config_fields.get('current_time')
+            if label:
+                value = data.get('current_time', '--:--:--')
+                label.config(text=f"Current Time: {value}")
+        if 'countdown' in data:
+            label = self.input_config_fields.get('countdown')
+            if label:
+                value = data.get('countdown', '--:--:--')
+                label.config(text=f"Time Until Target: {value}")
+        # Add more field updates as needed for your modules
+
+    def on_state_change(self, state):
+        # Optionally update block appearance based on state
+        if hasattr(self, 'frame'):
+            color = {
+                'ready': '#d4ffd4',
+                'error': '#ffd4d4',
+                'starting': '#ffffd4',
+                'stopped': '#f0f0f0',
+                'configured': '#d4e0ff',
+            }.get(state, '#ffffff')
+            self.frame.config(bg=color)
+            for child in self.frame.winfo_children():
+                try:
+                    child.config(bg=color)
+                except Exception:
+                    pass
+
+    def trigger_output(self, *args, **kwargs):
+        # Default trigger_output to prevent AttributeError; override in subclasses or set dynamically if needed
+        if hasattr(self, 'logger'):
+            self.logger.verbose('[InteractionBlock] trigger_output called (default/no-op)')
+        pass
+
+    def get_input_config(self, *args, **kwargs):
+        # Return a dict of all input field values for the selected input module
+        config = {}
+        for k, field in self.input_config_fields.items():
+            if isinstance(field, dict) and "var" in field:
+                config[k] = field["var"].get()
+            elif isinstance(field, tk.Entry):
+                config[k] = field.get()
+            elif isinstance(field, tk.StringVar):
+                config[k] = field.get()
+        return config
+
+    def handle_button_action(self, name, *args, **kwargs):
+        # Stub: handle button actions as needed
+        if hasattr(self, 'logger'):
+            self.logger.verbose(f'[InteractionBlock] handle_button_action called (stub) for {name}')
+        pass
+
+    def browse_csv_file(self, *args, **kwargs):
+        # Stub: implement file dialog as needed
+        if hasattr(self, 'logger'):
+            self.logger.verbose('[InteractionBlock] browse_csv_file called (stub)')
+        pass
+
+    def refresh_output_module_and_waveform(self, *args, **kwargs):
+        # Stub: refresh output module and waveform as needed
+        if hasattr(self, 'logger'):
+            self.logger.verbose('[InteractionBlock] refresh_output_module_and_waveform called (stub)')
+        pass
+
+    def update_input_modules_based_on_output(self, *args, **kwargs):
+        # Stub: update input modules as needed
+        if hasattr(self, 'logger'):
+            self.logger.verbose('[InteractionBlock] update_input_modules_based_on_output called (stub)')
+        pass
+
+    def update_output_modules_based_on_input(self, *args, **kwargs):
+        # Stub: update output modules as needed
+        if hasattr(self, 'logger'):
+            self.logger.verbose('[InteractionBlock] update_output_modules_based_on_input called (stub)')
+        pass
+
+    def connect_modules(self, *args, **kwargs):
+        # Stub: connect modules as needed
+        if hasattr(self, 'logger'):
+            self.logger.verbose('[InteractionBlock] connect_modules called (stub)')
+        pass
+
+    def refresh_protocol_fields(self, *args, **kwargs):
+        # Stub: refresh protocol fields as needed
+        if hasattr(self, 'logger'):
+            self.logger.verbose('[InteractionBlock] refresh_protocol_fields called (stub)')
+        pass
+
+    def purge_display_fields_from_output_config_memory(self):
+        """Remove all display fields from output_config_memory before saving."""
+        manifest = self.loader.load_manifest(self.output_var.get())
+        if not manifest:
+            return
+        display_fields = [f['name'] for f in manifest.get('fields', []) if f.get('type') == 'display']
+        for field in display_fields:
+            if field in self.output_config_memory:
+                del self.output_config_memory[field]
+
+    def to_dict(self):
+        # Purge display fields before saving config
+        self.purge_display_fields_from_output_config_memory()
+        return {
+            "input": {
+                "module": self.input_var.get(),
+                "config": self.get_input_config()
+            },
+            "output": {
+                "module": self.output_var.get(),
+                "config": self.get_output_config()
+            }
+        }
+
+    def time_event_callback(self, data):
+        # Update current time and countdown labels
+        current_time_label = self.input_config_fields.get('current_time')
+        countdown_label = self.input_config_fields.get('countdown')
+        if current_time_label:
+            current_time = data.get('current_time', '--:--:--')
+            self.frame.after(0, lambda: current_time_label.config(text=f"Current Time: {current_time}") if current_time_label.winfo_exists() else None)
+        if countdown_label:
+            countdown = data.get('countdown', '--:--:--')
+            self.frame.after(0, lambda: countdown_label.config(text=f"Time Until Target: {countdown}") if countdown_label.winfo_exists() else None)
+        # --- Patch: On trigger, send event to output module ---
+        if data.get('trigger', False):
+            self.logger.verbose(f"🔔 Time: Trigger event, sending to output_instance")
+            if self.output_instance:
+                if hasattr(self.output_instance, "update_config"):
+                    self.output_instance.update_config(self.get_output_config())
+                if hasattr(self.output_instance, "set_cursor_callback"):
+                    self.output_instance.set_cursor_callback(self.start_audio_playback)
+                self.output_instance.handle_event(data)
+                self.logger.verbose(f"✅ Time: handle_event call completed")
+            else:
+                self.logger.verbose(f"⚠️ Time: No output instance to send event to")
+
+    def update_fields_from_event(self, event_dict, field_type='input'):
+        """
+        Update GUI fields (input or output) at runtime from an event dict.
+        Only fields tagged with 'runtime_update': true in the manifest will be updated.
+        Args:
+            event_dict: dict of field_name -> value
+            field_type: 'input' or 'output'
+        """
+        if field_type == 'input':
+            manifest = self.loader.load_manifest(self.input_var.get())
+            fields = self.input_config_fields
+        else:
+            manifest = self.loader.load_manifest(self.output_var.get())
+            fields = self.output_config_fields
+        if not manifest:
+            return
+        for field in manifest.get('fields', []):
+            if not field.get('runtime_update'):
+                continue
+            name = field['name']
+            if name not in event_dict or name not in fields:
+                continue
+            value = event_dict[name]
+            widget = fields[name]
+            # Handle label fields
+            if isinstance(widget, tk.Label):
+                widget.config(text=f"{field.get('label', name)}: {value}")
+            # Handle entry fields
+            elif isinstance(widget, tk.Entry):
+                widget.delete(0, tk.END)
+                widget.insert(0, value)
+            # Handle StringVar fields (e.g., dropdowns)
+            elif isinstance(widget, tk.StringVar):
+                widget.set(value)
+            # Handle dict fields with 'var' (e.g., dropdowns)
+            elif isinstance(widget, dict) and 'var' in widget:
+                widget['var'].set(value)
 
 class InteractionGUI:
     # Shared registry for OSC input modules: (port, address) -> OSCInputModule instance
@@ -2145,17 +1780,177 @@ class InteractionGUI:
         self.logger = Logger(self._write_to_log)
         self.loader = ModuleLoader()
         self.blocks = []
-        self.threads = []  # Track all background threads for shutdown
-        self.loading = False  # <-- Add loading flag
-        self.initializing = False  # <-- Add initializing flag
+        self.threads = []
+        self.loading = False
+        self.initializing = False
         self.current_log_level = LogLevel.OUTPUTS
-        self.app_config = load_app_config()  # <-- Ensure app_config is initialized
+        self.event_router = get_message_router()  # Use the optimized event router
+        self.app_config = load_app_config()
+        self.closing = False
         self.setup_styles()
         self.build_gui()
-        self.load_config()
+        self._apply_log_level(self.log_level_var.get())
+        self._show_initializing_overlay()
+        threading.Thread(target=self._startup_barrier, daemon=True).start()
+        # Subscribe to module events and state changes
+        # self.event_router.subscribe('module_event', self._on_module_event)
+        # self.event_router.register_state_subscriber(None, self._on_module_state_change)
+        # Add a debugging panel for live event/state flow
+        self._init_debug_panel()
+
+    def _show_initializing_overlay(self):
+        # Destroy any existing overlay before creating a new one
+        if hasattr(self, 'init_overlay') and self.init_overlay:
+            try:
+                self.init_overlay.destroy()
+                self.logger.verbose("[_show_initializing_overlay] Previous init_overlay destroyed before creating new one.")
+            except Exception as e:
+                self.logger.verbose(f"[_show_initializing_overlay] Exception destroying previous init_overlay: {e}")
+            self.init_overlay = None
+        self.logger.verbose("[_show_initializing_overlay] Creating initializing overlay.")
+        self.init_overlay = tk.Toplevel(self.root)
+        self.init_overlay.title('Initializing...')
+        self.init_overlay.geometry('400x100+300+300')
+        self.init_overlay.transient(self.root)
+        self.init_overlay.grab_set()
+        self.init_overlay_label = tk.Label(self.init_overlay, text='Initializing modules, please wait...', font=('Inter', 14))
+        self.init_overlay_label.pack(expand=True, fill='both')
+        self.init_overlay.update()
+
+    def _hide_initializing_overlay(self):
+        self.logger.verbose("[_hide_initializing_overlay] Hiding initializing overlay.")
+        # Destroy both possible overlay attributes
+        if hasattr(self, 'init_overlay') and self.init_overlay:
+            try:
+                self.init_overlay.destroy()
+                self.logger.verbose("[_hide_initializing_overlay] init_overlay destroyed.")
+            except Exception as e:
+                self.logger.verbose(f"[_hide_initializing_overlay] Exception destroying init_overlay: {e}")
+            self.init_overlay = None
+        if hasattr(self, 'initializing_overlay') and self.initializing_overlay:
+            try:
+                self.initializing_overlay.destroy()
+                self.logger.verbose("[_hide_initializing_overlay] initializing_overlay destroyed.")
+            except Exception as e:
+                self.logger.verbose(f"[_hide_initializing_overlay] Exception destroying initializing_overlay: {e}")
+            self.initializing_overlay = None
+        # Also destroy debug panel if it exists and is a Toplevel
+        if hasattr(self, 'debug_panel') and self.debug_panel:
+            try:
+                self.debug_panel.destroy()
+                self.logger.verbose("[_hide_initializing_overlay] debug_panel destroyed.")
+            except Exception as e:
+                self.logger.verbose(f"[_hide_initializing_overlay] Exception destroying debug_panel: {e}")
+            self.debug_panel = None
+        # Enumerate all Toplevel windows after hiding overlays
+        self._log_all_toplevels()
+
+    def _log_all_toplevels(self):
+        # Helper to log all Toplevel windows for debugging stray popups
+        import tkinter
+        toplevels = []
+        for widget in self.root.winfo_children():
+            if isinstance(widget, tkinter.Toplevel):
+                try:
+                    title = widget.title()
+                except Exception:
+                    title = '<unknown>'
+                toplevels.append(title)
+        self.logger.verbose(f"[OverlayDebug] Remaining Toplevel windows: {toplevels}")
+
+    def _startup_barrier(self):
+        # Load config and instantiate modules, but do not enable GUI/event flow yet
+        self.logger.verbose("[StartupBarrier] Waiting for all modules to be ready...")
+        self.loading = True
+        self.initializing = True
+        self._show_initializing_overlay()
+        self.blocks = []
+        self.threads = []
+        self._modules_ready = set()
+        self._modules_total = set()
+        # Load config and create blocks
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                config = json.load(f)
+            for interaction in config:
+                block = self.add_block_atomic(preset=interaction)
+                if block is None:
+                    self.logger.verbose(f"[StartupBarrier] Skipping invalid block for interaction: {interaction}")
+                    continue
+                if block.input_instance:
+                    self._modules_total.add(block.input_instance)
+                    self.logger.verbose(f"[StartupBarrier] Added input_instance to _modules_total: {repr(block.input_instance)} (id={id(block.input_instance)})")
+                if block.output_instance:
+                    self._modules_total.add(block.output_instance)
+                    self.logger.verbose(f"[StartupBarrier] Added output_instance to _modules_total: {repr(block.output_instance)} (id={id(block.output_instance)})")
+            self.logger.verbose(f"[StartupBarrier] Modules to wait for: {len(self._modules_total)}")
+        except Exception as e:
+            self.logger.verbose(f"[StartupBarrier] Failed to load config: {e}")
+        # Wait for all modules to be ready
+        def on_state_change(module, state):
+            self.logger.verbose(f"[StartupBarrier] State change: {module} (id={id(module)}) -> {state}")
+            if state == 'ready':
+                self._modules_ready.add(module)
+            # Log the ids and reprs of both sets
+            total_ids = [id(m) for m in self._modules_total]
+            ready_ids = [id(m) for m in self._modules_ready]
+            self.logger.verbose(f"[StartupBarrier] _modules_total ids: {total_ids}")
+            self.logger.verbose(f"[StartupBarrier] _modules_ready ids: {ready_ids}")
+            self.logger.verbose(f"[StartupBarrier] _modules_total reprs: {[repr(m) for m in self._modules_total]}")
+            self.logger.verbose(f"[StartupBarrier] _modules_ready reprs: {[repr(m) for m in self._modules_ready]}")
+            if self._modules_ready == self._modules_total:
+                self.logger.verbose("[StartupBarrier] All modules ready!")
+                self._on_all_modules_ready()
+            else:
+                not_ready = self._modules_total - self._modules_ready
+                self.logger.verbose(f"[StartupBarrier] Still waiting for: {not_ready}")
+        self.event_router.register_state_subscriber(None, on_state_change)
+        # Immediately check if all modules are already ready
+        if all(getattr(m, 'state', None) == 'ready' for m in self._modules_total):
+            self.logger.verbose("[StartupBarrier] All modules already ready after registration!")
+            self._on_all_modules_ready()
+
+    def _on_all_modules_ready(self):
+        self.logger.verbose("[_on_all_modules_ready] All modules are ready. Hiding overlays and enabling GUI.")
+        self._hide_initializing_overlay()
+        self.loading = False
+        self.initializing = False
+        # System-level sync for dynamic output fields
+        self.sync_all_dynamic_output_fields_to_config()
+        # Update system state label to Ready
+        if hasattr(self, 'status_label'):
+            self.status_label.config(text="System State: Ready")
+        # Optionally, log that GUI is now interactive
+        self.logger.verbose("[_on_all_modules_ready] GUI is now interactive.")
+
+    def sync_all_dynamic_output_fields_to_config(self):
+        """After all modules are ready, ensure all dynamic output fields (e.g., serial_port) are set to their config values."""
+        for block in self.blocks:
+            if hasattr(block, 'output_config_fields') and hasattr(block, 'get_output_config'):
+                config = block.get_output_config()
+                for k, v in config.items():
+                    field = block.output_config_fields.get(k)
+                    if not field:
+                        continue
+                    # Handle dropdowns (combos)
+                    if isinstance(field, dict) and "var" in field:
+                        combo = field.get("combo")
+                        if combo and v not in combo["values"]:
+                            values = list(combo["values"])
+                            values.append(v)
+                            combo["values"] = values
+                        field["var"].set(v)
+                    # Handle text entries
+                    elif isinstance(field, tk.Entry):
+                        field.delete(0, tk.END)
+                        field.insert(0, v)
 
     def _write_to_log(self, msg):
         """Internal method to write to the log text widget - thread-safe"""
+        if getattr(self, 'closing', False):
+            # If closing, do not update GUI, just print
+            print(f"[LOG] {msg}")
+            return
         try:
             # Use after() to schedule the update on the main thread
             self.root.after(0, self._write_to_log_safe, msg)
@@ -2266,7 +2061,7 @@ class InteractionGUI:
         log_control_frame.pack(fill="x", pady=(0, 5))
         
         ttk.Label(log_control_frame, text="Log Level:", style="Label.TLabel").pack(side="left", padx=(0, 10))
-        self.log_level_var = tk.StringVar(value="Outputs")
+        self.log_level_var = tk.StringVar(value=self.app_config.get("log_level", "Outputs"))
         log_level_combo = ttk.Combobox(log_control_frame, textvariable=self.log_level_var, 
                                       values=["No Logging", "OSC", "Serial", "Outputs", "Verbose/Debug"], 
                                       state="readonly", width=20, style="Combo.TCombobox")
@@ -2277,6 +2072,11 @@ class InteractionGUI:
         self.log_text = tk.Text(log_frame, height=8, bg="#2a2a2a", fg="#00ff00", 
                                font=("Consolas", 10), relief="flat", bd=0)
         self.log_text.pack(fill="both")
+
+        # Add a status label for system state at the bottom
+        if not hasattr(self, 'status_label'):
+            self.status_label = tk.Label(self.root, text="System State: Initializing", anchor="w", fg="gray")
+            self.status_label.pack(side="bottom", fill="x")
 
     def on_installation_name_change(self, new_name):
         """Called when installation name is changed"""
@@ -2290,13 +2090,13 @@ class InteractionGUI:
         self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def add_block(self, preset=None):
-        block = InteractionBlock(self.scrollable_frame, self.loader, self.logger, self.save_config, self.remove_block, preset, current_log_level=self.log_level_var.get(), gui_ref=self)
-        self.blocks.append(block)
-        if preset is not None:
-            block.initialize_from_preset()
-        # Only save config if not loading/initializing
-        if not (self.loading or self.initializing):
-            self.save_config()  # Save config only on explicit add
+        try:
+            block = InteractionBlock(self.scrollable_frame, self.loader, self.logger, self.save_config, self.remove_block, preset=preset, current_log_level=self.current_log_level, gui_ref=self)
+            self.blocks.append(block)
+            return block
+        except Exception as e:
+            self.logger.verbose(f"[add_block] Failed to create block for preset: {preset}\nReason: {e}")
+            return None
 
     def remove_block(self, block):
         if block in self.blocks:
@@ -2307,6 +2107,9 @@ class InteractionGUI:
             if hasattr(block, 'output_instance') and block.output_instance:
                 if hasattr(block.output_instance, 'stop'):
                     block.output_instance.stop()
+            # Destroy the block's frame so it disappears from the GUI
+            if hasattr(block, 'frame') and block.frame:
+                block.frame.destroy()
             self.blocks.remove(block)
             # Only save config if not loading/initializing
             if not (self.loading or self.initializing):
@@ -2321,9 +2124,7 @@ class InteractionGUI:
         if getattr(self, 'loading', False) or getattr(self, 'initializing', False):
             return  # Prevent saving during loading/initializing
         valid_blocks = [b for b in self.blocks if b.is_valid()]
-        config = {
-            "interactions": [b.to_dict() for b in valid_blocks]
-        }
+        config = [b.to_dict() for b in valid_blocks]
         try:
             with open("config/interactions/interactions.json", "w") as f:
                 json.dump(config, f, indent=2)
@@ -2353,11 +2154,10 @@ class InteractionGUI:
 
     def add_block_atomic(self, preset=None):
         block = InteractionBlock(self.scrollable_frame, self.loader, self.logger, self.save_config, self.remove_block, preset, current_log_level=self.log_level_var.get(), gui_ref=self)
-        block.build_block()  # Ensure block is packed into the GUI
-        # Set all fields from config, no callbacks
-        if preset is not None:
-            block.set_fields_from_config(preset)
-            block.instantiate_modules_from_gui()
+        # Only call build_block if preset is None (i.e., new/empty block)
+        if preset is None:
+            block.build_block()
+        self.blocks.append(block)
         return block
 
     def on_log_level_change(self, event=None):
@@ -2413,6 +2213,7 @@ class InteractionGUI:
 
     def cleanup(self):
         """Clean up resources before shutdown"""
+        self.closing = True  # <-- Set closing flag to prevent GUI log updates
         self.log("🛑 Starting cleanup process...", LogLevel.VERBOSE)
         # Step 1: Stop cursor threads and all tracked threads
         self.log("🛑 Stopping all background threads...", LogLevel.VERBOSE)
@@ -2455,6 +2256,47 @@ class InteractionGUI:
                     except Exception as e:
                         self.log(f"⚠️ Error stopping output instance {i}: {e}", LogLevel.VERBOSE)
         self.log("✅ Cleanup completed", LogLevel.VERBOSE)
+
+    # def _on_module_event(self, event):
+    #     # Called on any module event; update relevant GUI block
+    #     def update_gui():
+    #         # Find the block corresponding to the module and update its display
+    #         module = event.get('module')
+    #         data = event.get('data')
+    #         for block in self.blocks:
+    #             if block.input_instance == module or block.output_instance == module:
+    #                 block.on_event_received(data)
+    #     self.root.after(0, update_gui)
+
+    # def _on_module_state_change(self, module, state):
+    #     # Called on any module state change; update GUI indicators
+    #     def update_gui():
+    #         for block in self.blocks:
+    #             if block.input_instance == module or block.output_instance == module:
+    #                 block.on_state_change(state)
+    #         # Optionally update a global status indicator
+    #         if hasattr(self, 'status_label'):
+    #             self.status_label.config(text=f"System State: {state}")
+    #     self.root.after(0, update_gui)
+
+    def _init_debug_panel(self):
+        # Add a simple debug panel to visualize event/state flow
+        if hasattr(self, 'debug_panel'):
+            return
+        self.debug_panel = tk.Toplevel(self.root)
+        self.debug_panel.title("Event/State Debug Panel")
+        self.debug_panel.geometry("400x300")
+        self.debug_text = tk.Text(self.debug_panel, state='disabled', height=20)
+        self.debug_text.pack(fill='both', expand=True)
+        # Hook into EventRouter debug log
+        def update_debug_log():
+            self.debug_text.config(state='normal')
+            self.debug_text.delete(1.0, tk.END)
+            for event_type, meta in self.event_router.debug_log[-100:]:
+                self.debug_text.insert(tk.END, f"{event_type}: {meta}\n")
+            self.debug_text.config(state='disabled')
+            self.debug_panel.after(1000, update_debug_log)
+        update_debug_log()
 
 def launch_gui():
     root = tk.Tk()

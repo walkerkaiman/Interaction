@@ -26,10 +26,11 @@
       "default": "Disconnected"
     },
     {
-      "name": "incoming_data",
+      "name": "current_value",
       "type": "label",
-      "label": "Incoming Data",
-      "default": "No data received"
+      "label": "Current Value",
+      "default": "No data received",
+      "runtime_update": true
     }
   ]
 } 

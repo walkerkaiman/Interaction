@@ -21,8 +21,20 @@ License: MIT
 import os
 import sys
 import socket
-import tkinter as tk
-from gui import launch_gui
+import argparse
+import threading
+import time
+import webbrowser
+from pathlib import Path
+
+# Performance optimization imports
+from performance import initialize_performance_optimizations, PerformanceLevel, shutdown_performance_manager
+
+# Optionally import Tkinter GUI
+try:
+    from gui import launch_gui
+except ImportError:
+    launch_gui = None
 
 def is_port_in_use(port):
     """
@@ -129,52 +141,77 @@ def check_singleton():
     return True
 
 def main():
-    """
-    Main entry point for the Interaction application.
-    
-    This function:
-    1. Checks if another instance is running (singleton check)
-    2. Creates a lock file if no other instance is running
-    3. Launches the GUI
-    4. Ensures cleanup on exit
-    
-    The application uses a try-finally block to ensure the lock file
-    is always removed, even if the application crashes or is interrupted.
-    """
     print("🚀 Starting Interaction App...")
-    
-    # Step 1: Check if another instance is running
+    # Initialize performance optimizations
+    perf_manager = initialize_performance_optimizations(PerformanceLevel.BALANCED)
+    parser = argparse.ArgumentParser(description="Interaction App Backend")
+    parser.add_argument('--web', action='store_true', help='Start the web backend (default)')
+    parser.add_argument('--gui', action='store_true', help='Start the legacy Tkinter GUI')
+    args = parser.parse_args()
+
     if not check_singleton():
         input("Press Enter to exit...")
         sys.exit(1)
-    
-    # Step 2: Create lock file to prevent other instances
     lock_file = create_lock_file()
     if not lock_file:
         print("❌ Failed to create lock file. Another instance might be running.")
         input("Press Enter to exit...")
         sys.exit(1)
-    
     try:
-        # Step 3: Launch the GUI
-        print("✅ Starting GUI...")
-        launch_gui()
+        if args.gui and launch_gui:
+            print("✅ Starting legacy GUI...")
+            launch_gui()
+        else:
+            print("✅ Starting web backend...")
+            
+            # Get the path to the web interface
+            web_gui_path = Path(__file__).parent / "web-frontend" / "simple-gui.html"
+            
+            # Check if the web GUI file exists
+            if not web_gui_path.exists():
+                print(f"⚠️  Web GUI file not found at: {web_gui_path}")
+                print("Starting backend without web interface...")
+                import web_backend
+                web_backend.run()
+            else:
+                # Start the web backend in a separate thread
+                def start_web_backend():
+                    import web_backend
+                    web_backend.run()
+                
+                backend_thread = threading.Thread(target=start_web_backend, daemon=True)
+                backend_thread.start()
+                
+                # Wait a moment for the server to start
+                print("⏳ Waiting for server to start...")
+                time.sleep(3)
+                
+                # Open the web interface in the default browser
+                print("🌐 Opening web interface...")
+                try:
+                    webbrowser.open(f"file://{web_gui_path}")
+                    print("✅ Web interface opened in browser!")
+                    print("🔗 Manual URL: file://" + str(web_gui_path))
+                except Exception as e:
+                    print(f"⚠️  Could not open browser automatically: {e}")
+                    print("🔗 Please manually open: file://" + str(web_gui_path))
+                
+                print("🛑 Press Ctrl+C to stop the server")
+                
+                # Keep the main thread running
+                try:
+                    while True:
+                        time.sleep(1)
+                except KeyboardInterrupt:
+                    print("\n🛑 Stopping web backend...")
     except KeyboardInterrupt:
-        # Handle Ctrl+C gracefully
         print("\n🛑 Application interrupted by user")
     except Exception as e:
-        # Handle any other exceptions
         print(f"💥 Application error: {e}")
     finally:
-        # Step 4: Always clean up the lock file
         remove_lock_file(lock_file)
+        shutdown_performance_manager()
         print("👋 Interaction App closed")
-        
-        # Force exit after cleanup to prevent hanging
-        import os
-        os._exit(0)
 
 if __name__ == "__main__":
-    # Only run main() if this file is executed directly
-    # This prevents the singleton check from running when the file is imported
     main()

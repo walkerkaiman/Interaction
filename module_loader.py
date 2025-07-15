@@ -28,7 +28,8 @@ import sys
 import json
 import importlib.util
 from typing import Dict, List, Any, Optional, Type
-from modules.module_base import ModuleBase
+from modules.module_base import ModuleBase, TriggerStrategy, StreamingStrategy
+from abc import ABC, abstractmethod
 
 class InputEventRouter:
     """
@@ -77,6 +78,62 @@ class InputEventRouter:
 # Create a global instance for use by all modules/frontends
 input_event_router = InputEventRouter()
 
+class ModuleFactory(ABC):
+    @abstractmethod
+    def create_input_module(self, loader, module_name: str, config: Dict, log_callback=print) -> Optional[ModuleBase]:
+        pass
+
+    @abstractmethod
+    def create_output_module(self, loader, module_name: str, config: Dict, log_callback=print) -> Optional[ModuleBase]:
+        pass
+
+class TriggerModuleFactory(ModuleFactory):
+    def create_input_module(self, loader, module_name: str, config: Dict, log_callback=print) -> Optional[ModuleBase]:
+        module_class = loader.load_module_class(module_name)
+        manifest = loader.load_manifest(module_name)
+        if module_class and manifest:
+            return module_class(config, manifest, log_callback, strategy=TriggerStrategy())
+        return None
+
+    def create_output_module(self, loader, module_name: str, config: Dict, log_callback=print) -> Optional[ModuleBase]:
+        module_class = loader.load_module_class(module_name)
+        manifest = loader.load_manifest(module_name)
+        if module_class and manifest:
+            return module_class(config, manifest, log_callback, strategy=TriggerStrategy())
+        return None
+
+class StreamingModuleFactory(ModuleFactory):
+    def create_input_module(self, loader, module_name: str, config: Dict, log_callback=print) -> Optional[ModuleBase]:
+        module_class = loader.load_module_class(module_name)
+        manifest = loader.load_manifest(module_name)
+        if module_class and manifest:
+            return module_class(config, manifest, log_callback, strategy=StreamingStrategy())
+        return None
+
+    def create_output_module(self, loader, module_name: str, config: Dict, log_callback=print) -> Optional[ModuleBase]:
+        module_class = loader.load_module_class(module_name)
+        manifest = loader.load_manifest(module_name)
+        if module_class and manifest:
+            return module_class(config, manifest, log_callback, strategy=StreamingStrategy())
+        return None
+
+class AdaptiveModuleFactory(ModuleFactory):
+    def create_input_module(self, loader, module_name: str, config: Dict, log_callback=print) -> Optional[ModuleBase]:
+        module_class = loader.load_module_class(module_name)
+        manifest = loader.load_manifest(module_name)
+        if module_class and manifest:
+            # Adaptive modules don't use a specific strategy - they adapt at runtime
+            return module_class(config, manifest, log_callback, strategy=None)
+        return None
+
+    def create_output_module(self, loader, module_name: str, config: Dict, log_callback=print) -> Optional[ModuleBase]:
+        module_class = loader.load_module_class(module_name)
+        manifest = loader.load_manifest(module_name)
+        if module_class and manifest:
+            # Adaptive modules don't use a specific strategy - they adapt at runtime
+            return module_class(config, manifest, log_callback, strategy=None)
+        return None
+
 class ModuleLoader:
     """
     Dynamic module discovery and loading system.
@@ -118,6 +175,11 @@ class ModuleLoader:
         self.modules_dir = modules_dir
         self.available_modules = {}
         self.loaded_modules = {}
+        self.factories = {
+            'trigger': TriggerModuleFactory(),
+            'streaming': StreamingModuleFactory(),
+            'adaptive': AdaptiveModuleFactory(),
+        }
         
         # Discover available modules on initialization
         self.discover_modules()
@@ -256,7 +318,7 @@ class ModuleLoader:
                 
                 # Validate classification if present
                 if 'classification' in manifest:
-                    if manifest['classification'] not in ['trigger', 'streaming']:
+                    if manifest['classification'] not in ['trigger', 'streaming', 'adaptive']:
                         print(f"❌ Module '{module_name}' has invalid classification: {manifest['classification']}")
                         return None
                 
@@ -334,8 +396,7 @@ class ModuleLoader:
             print(f"❌ Error loading module class '{module_name}': {e}")
             return None
     
-    def create_module_instance(self, module_name: str, config: Dict[str, Any], 
-                              log_callback=print) -> Optional[ModuleBase]:
+    def create_module_instance(self, module_name: str, config: Dict[str, Any], log_callback=print) -> Optional[ModuleBase]:
         """
         Create an instance of a module with the given configuration.
         
@@ -365,12 +426,23 @@ class ModuleLoader:
         if module_class is None:
             return None
         
+        module_type = manifest.get('type')
+        classification = manifest.get('classification') or ''
+        factory = self.factories.get(str(classification))
+        if not factory:
+            print(f"❌ No factory registered for classification: {classification}")
+            return None
         try:
-            # Create module instance
-            instance = module_class(config, manifest, log_callback)
-            print(f"✅ Created instance of module: {module_name}")
+            if module_type == 'input':
+                instance = factory.create_input_module(self, module_name, config, log_callback)
+            elif module_type == 'output':
+                instance = factory.create_output_module(self, module_name, config, log_callback)
+            else:
+                print(f"❌ Unknown module type: {module_type}")
+                return None
+            if instance:
+                print(f"✅ Created instance of module: {module_name}")
             return instance
-            
         except Exception as e:
             print(f"❌ Error creating instance of module '{module_name}': {e}")
             return None

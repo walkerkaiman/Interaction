@@ -1,0 +1,44 @@
+{
+  "name": "OSC Output",
+  "type": "output",
+  "classification": "adaptive",
+  "mode": "adaptive",
+  "description": "Unified OSC output module that automatically adapts behavior based on connected input module type. Works with both trigger and streaming inputs.",
+  "fields": [
+    {
+      "name": "ip_address",
+      "type": "text",
+      "label": "IP Address",
+      "default": "127.0.0.1"
+    },
+    {
+      "name": "port",
+      "type": "text",
+      "label": "Port",
+      "default": "8000"
+    },
+    {
+      "name": "osc_address",
+      "type": "text",
+      "label": "OSC Address",
+      "default": "/data"
+    }
+  ],
+  "config_schema": {
+    "ip_address": {
+      "type": "string",
+      "default": "127.0.0.1",
+      "required": true
+    },
+    "port": {
+      "type": "string",
+      "default": "8000",
+      "required": true
+    },
+    "osc_address": {
+      "type": "string",
+      "default": "/data",
+      "required": true
+    }
+  }
+} 

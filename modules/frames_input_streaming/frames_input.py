@@ -112,6 +112,7 @@ class SACNFramesInputStreamingModule(ModuleBase):
                 self.last_frame = frame_number
                 event_data = {
                     'value': frame_number,
+                    'current_frame': frame_number,
                     'stream': True,
                     'universe': universe,
                     'timestamp': time.time()
@@ -164,3 +165,14 @@ class SACNFramesInputStreamingModule(ModuleBase):
             callback: Function to call when events are emitted
         """
         self.add_event_callback(callback) 
+
+    def _on_frame_received(self, frame_number, universe, timestamp):
+        # Called when a new frame is received from the network
+        event_data = {
+            'value': frame_number,
+            'stream': True,
+            'universe': universe,
+            'timestamp': timestamp
+        }
+        self.emit_event(event_data)
+        self.log_message(f"sACN Frames Input Streaming emitting event: {event_data}") 
