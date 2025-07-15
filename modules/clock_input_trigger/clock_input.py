@@ -20,10 +20,16 @@ class ClockInputModule(ModuleBase):
         self._thread.start()
 
     def stop(self):
+        """
+        Stop the clock input module and clean up resources.
+        Ensures all threads and resources are properly released.
+        """
         self._running = False
         if self._thread:
-            self._thread.join(timeout=1)
+            self.log_callback("[DEBUG] Joining clock input thread...")
+            self._thread.join(timeout=2)
             self._thread = None
+        self.log_callback("🛑 Clock input module stopped")
 
     def add_event_callback(self, callback):
         self._event_callbacks.add(callback)

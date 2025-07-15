@@ -43,14 +43,16 @@ class SerialInputModule(ModuleBase):
         self.log_message("🚀 Serial input module started")
 
     def stop(self):
-        """Stop the serial input module"""
+        """
+        Stop the serial input module and clean up resources.
+        Ensures all threads and resources are properly released.
+        """
         self._running = False
         self._disconnect()
-        
         if self._thread:
+            self.log_message("[DEBUG] Joining serial input thread...")
             self._thread.join(timeout=2)
             self._thread = None
-        
         self.log_message("🛑 Serial input module stopped")
 
     def add_event_callback(self, callback):

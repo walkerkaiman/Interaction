@@ -60,14 +60,16 @@ class SerialTriggerModule(ModuleBase):
         self.log_message("🚀 Serial trigger module started")
 
     def stop(self):
-        """Stop the serial trigger module"""
+        """
+        Stop the serial trigger module and clean up resources.
+        Ensures all threads and resources are properly released.
+        """
         self._running = False
         self._disconnect()
-        
         if self._thread:
+            self.log_message("[DEBUG] Joining serial trigger thread...")
             self._thread.join(timeout=2)
             self._thread = None
-        
         self.log_message("🛑 Serial trigger module stopped")
 
     def add_event_callback(self, callback):

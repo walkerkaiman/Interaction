@@ -6,11 +6,11 @@
         "config": {}
       },
       "output": {
-        "module": "osc_output_streaming",
+        "module": "dmx_output_streaming",
         "config": {
-          "ip_address": "127.0.0.1",
-          "port": "8000",
-          "osc_address": "/data"
+          "protocol": "serial",
+          "csv_file": "default_dmx.csv",
+          "serial_port": "COM1"
         }
       }
     }

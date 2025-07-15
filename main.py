@@ -169,6 +169,10 @@ def main():
         # Step 4: Always clean up the lock file
         remove_lock_file(lock_file)
         print("👋 Interaction App closed")
+        
+        # Force exit after cleanup to prevent hanging
+        import os
+        os._exit(0)
 
 if __name__ == "__main__":
     # Only run main() if this file is executed directly

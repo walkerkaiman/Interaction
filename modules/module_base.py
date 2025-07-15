@@ -121,8 +121,9 @@ class ModuleBase:
         Emit an event to all registered callbacks.
         """
         module_name = self.manifest.get('name', 'Unknown Module')
-        self.log_message(f"{module_name} emitting event: {data}")
-        self.log_message(f"[DEBUG] emit_event: Instance {id(self)} ({module_name}) callbacks: {[str(cb) for cb in self._event_callbacks]}")
+        # Only log significant events to reduce verbosity
+        if 'value' in data or 'trigger' in data:
+            self.log_message(f"{module_name} emitting event: {data}")
         # Call all registered event callbacks
         for callback in self._event_callbacks:
             try:
@@ -162,13 +163,8 @@ class ModuleBase:
         modules together. When an input module emits an event, all registered
         callbacks are called with the event data.
         """
-        module_name = self.manifest.get('name', 'Unknown Module')
-        self.log_message(f"[DEBUG] add_event_callback: Adding callback {callback} to instance {id(self)} ({module_name})")
         if callback is not None:
             self._event_callbacks.append(callback)
-            self.log_message(f"[DEBUG] add_event_callback: Callback list now: {[str(cb) for cb in self._event_callbacks]}")
-        else:
-            self.log_message(f"[DEBUG] add_event_callback: Ignored None callback for instance {id(self)} ({module_name})")
 
     def remove_event_callback(self, callback: Callable):
         """

@@ -70,33 +70,35 @@ class SACNFramesInputStreamingModule(ModuleBase):
             self.log_message("❌ Cannot start sACN receiver - library not available")
             return
         try:
-            self.log_message("[DEBUG] Creating sACN receiver instance...")
             self.receiver = sacn.sACNreceiver()
             self.receiver.start()
-            self.log_message("[DEBUG] sACN receiver started.")
             self.receiver.on_dmx_data_change = self._dmx_data_callback
             self.receiver.join_multicast(self.universe)
-            self.log_message(f"📡 Joined sACN Universe {self.universe}")
             self.is_running = True
             self.log_message(f"✅ sACN receiver started on Universe {self.universe}")
         except Exception as e:
             self.log_message(f"❌ Failed to start sACN receiver: {e}")
 
     def stop(self):
+        """
+        Stop the sACN Frames Input Streaming module and clean up resources.
+        Ensures all threads and resources are properly released.
+        """
         super().stop()
         self.is_running = False
+        # Stop sACN receiver if running
         if self.receiver:
             try:
                 self.receiver.stop()
                 self.log_message(f"🛑 sACN receiver stopped on Universe {self.universe}")
             except Exception as e:
                 self.log_message(f"⚠️ Error stopping sACN receiver: {e}")
-            # Remove references to receiver for cleanup
             self.receiver = None
-            self.log_message(f"[DEBUG] sACN receiver reference set to None")
-        # Remove unused receiver_thread logic for clean shutdown
-        self.receiver_thread = None
-        self.log_message(f"[DEBUG] frames_input_streaming stop() completed and all references cleaned up")
+        # Join any custom threads (if used in future)
+        if self.receiver_thread and hasattr(self.receiver_thread, 'is_alive'):
+            if self.receiver_thread.is_alive():
+                self.receiver_thread.join(timeout=2)
+            self.receiver_thread = None
 
     def _dmx_data_callback(self, packet):
         try:
@@ -106,6 +108,7 @@ class SACNFramesInputStreamingModule(ModuleBase):
             with self.frame_lock:
                 self.current_frame = frame_number
             if frame_number != self.last_frame:
+                old_frame = self.last_frame
                 self.last_frame = frame_number
                 event_data = {
                     'value': frame_number,
@@ -114,7 +117,9 @@ class SACNFramesInputStreamingModule(ModuleBase):
                     'timestamp': time.time()
                 }
                 self.emit_event(event_data)
-                self.log_message(f"[STREAM] Frame: {frame_number} (Universe {universe})")
+                # Only log significant frame changes to reduce console spam
+                if frame_number > 0:
+                    self.log_message(f"📡 Frame change: {old_frame} -> {frame_number}")
         except Exception as e:
             self.log_message(f"❌ Error in DMX data callback: {e}")
 
@@ -132,7 +137,7 @@ class SACNFramesInputStreamingModule(ModuleBase):
         with self.frame_lock:
             frame_display = "No frame received" if self.current_frame == 0 else str(self.current_frame)
             return {
-                'incoming_data': frame_display,
+                'frame_number': frame_display,
                 'connection_status': "Connected" if self.is_running else "Disconnected"
             }
 
