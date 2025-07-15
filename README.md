@@ -443,3 +443,37 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ---
 
 For more information, see the individual module documentation and test scripts.
+
+## Developer Guide: Extending the Event-Driven Modular GUI
+
+1. Architectural Overview: Event-driven, state-driven, thread-safe design. No polling. All state changes via explicit pathways.
+2. Adding a New Module:
+   - Manifest: Define fields, types, and protocol-dependent options.
+   - Module Class: Inherit from ModuleBase, implement event/callback system, emit events for all state changes.
+   - GUI Integration: Use event/callbacks for all dynamic fields. Never use polling. Register any threads with the GUI (self.gui_ref.threads.append(...)).
+   - Config: All config/state changes must go through explicit update pathways. Use get_input_config/get_output_config and update_config methods.
+   - Thread Safety: All GUI updates from threads must use self.root.after().
+   - Shutdown: Implement stop() for all background tasks. Register threads for clean shutdown.
+3. Best Practices:
+   - Centralize state in config and block objects.
+   - Only save/load config on explicit state changes.
+   - Use clear docstrings and comments for AI and human maintainers.
+   - Add TODOs for any future improvements or places where new modules should follow the same patterns.
+4. AI/Automation Notes:
+   - All module and GUI logic is discoverable via clear method names and docstrings.
+   - All event/callback registration points are explicit.
+   - Thread and resource management is centralized for easy auditing.
+   - No polling or hidden background tasks: all state changes are explicit and traceable.
+5. Example Checklist for New Modules:
+   - [ ] Manifest defines all fields and protocol options
+   - [ ] Module emits events for all state changes
+   - [ ] GUI fields update only via event/callbacks
+   - [ ] No polling or untracked threads
+   - [ ] All threads registered for shutdown
+   - [ ] All config/state changes go through explicit update pathways
+   - [ ] stop() implemented for all background tasks
+   - [ ] All GUI updates from threads use self.root.after()
+   - [ ] Docstrings and comments added for AI/human maintainers
+   - [ ] TODOs left for future improvements
+
+Make this section clear, concise, and actionable for both AI and human developers.

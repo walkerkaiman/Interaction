@@ -10,7 +10,7 @@
         "config": {
           "protocol": "serial",
           "csv_file": "default_dmx.csv",
-          "serial_port": "COM1"
+          "serial_port": "COM5"
         }
       }
     }
