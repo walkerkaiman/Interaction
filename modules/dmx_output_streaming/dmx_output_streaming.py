@@ -37,20 +37,22 @@ class DMXOutputModule(ModuleBase):
         self.subnet = int(config.get('subnet', 0))
         self.dmx_frames = []
         self.current_frame = "No frame received"
+        self._last_sent_frame_number = None  # Track last frame number sent
+        self._last_config = None  # Track last config for efficient reload
         self._load_csv()
         self._setup_protocol()
-        self._lock = threading.Lock()
         self.log_message(f"DMX Output initialized with protocol: {self.protocol}")
 
     def _load_csv(self):
-        # Try to load the CSV, fallback to default if malformed or missing
         path = self.csv_file or os.path.join(os.path.dirname(__file__), 'default_dmx.csv')
+        if hasattr(self, '_last_csv_path') and self._last_csv_path == path:
+            return  # No need to reload
+        self._last_csv_path = path
         try:
             with open(path, 'r', newline='') as f:
                 reader = csv.reader(f)
                 self.dmx_frames = []
                 for row in reader:
-                    # Pad/truncate to 512 channels, default missing to 0
                     frame = [(int(val) if val else 0) for val in row[:DMX_CHANNELS]]
                     if len(frame) < DMX_CHANNELS:
                         frame += [0] * (DMX_CHANNELS - len(frame))
@@ -59,7 +61,6 @@ class DMXOutputModule(ModuleBase):
                 raise ValueError('CSV contained no frames')
             self.log_message(f"Loaded {len(self.dmx_frames)} DMX frames from CSV: {path}")
         except Exception as e:
-            # Fallback to default
             self.log_message(f"Error loading CSV '{path}': {e}. Using default.")
             default_path = os.path.join(os.path.dirname(__file__), 'default_dmx.csv')
             with open(default_path, 'r', newline='') as f:
@@ -73,13 +74,17 @@ class DMXOutputModule(ModuleBase):
             self.log_message(f"Loaded {len(self.dmx_frames)} DMX frames from default CSV.")
 
     def _setup_protocol(self):
+        # Only re-open serial if port or protocol changes
+        if hasattr(self, '_last_serial_port') and self._last_serial_port == self.serial_port and self.protocol == getattr(self, '_last_protocol', None):
+            return
+        self._last_serial_port = self.serial_port
+        self._last_protocol = self.protocol
         self._close_protocol()
         if self.protocol == 'serial':
             try:
-                # DMX512 uses 57600 baud, 8 data bits, 2 stop bits, no parity
                 self.serial_conn = serial.Serial(
                     port=self.serial_port,
-                    baudrate=57600,  # DMX512 baud rate as originally specified
+                    baudrate=57600,
                     bytesize=serial.EIGHTBITS,
                     parity=serial.PARITY_NONE,
                     stopbits=serial.STOPBITS_TWO,
@@ -103,7 +108,6 @@ class DMXOutputModule(ModuleBase):
                 self.sacn_universe = self.sacn_sender.activate_output(self.universe)
                 if self.sacn_universe is not None:
                     self.sacn_universe.multicast = True
-                    # sACN multicast doesn't need destination IP
                 self.log_message(f"sACN multicast sender started for universe {self.universe}")
             except Exception as e:
                 self.sacn_sender = None
@@ -155,25 +159,23 @@ class DMXOutputModule(ModuleBase):
             self.sacn_universe = None
 
     def update_config(self, config):
-        # Update config and reload protocol/CSV if needed
+        # Only reload if config actually changes
+        if self._last_config == config:
+            return
+        self._last_config = dict(config)
         self.protocol = config.get('protocol', self.protocol)
         self.csv_file = config.get('csv_file', self.csv_file)
         self.universe = int(config.get('universe', self.universe))
-        
-        # Only update IP/port for Art-Net (not sACN)
         if self.protocol == 'artnet':
             self.ip_address = config.get('ip_address', self.ip_address)
             self.port = int(config.get('port', self.port))
-        
         self.serial_port = config.get('serial_port', self.serial_port)
-        # baud_rate is hardcoded to 57600
         self.net = int(config.get('net', self.net))
         self.subnet = int(config.get('subnet', self.subnet))
         self._load_csv()
         self._setup_protocol()
 
     def handle_event(self, data):
-        # Expecting a frame number in the event data
         try:
             frame_number = int(data.get('value', 0))
         except Exception:
@@ -181,37 +183,27 @@ class DMXOutputModule(ModuleBase):
         if not self.dmx_frames:
             self.log_message("No DMX frames loaded!")
             return
-        # Modulo frame number to loop through available frames
+        # Only send if frame number changes
+        if self._last_sent_frame_number == frame_number:
+            return
+        self._last_sent_frame_number = frame_number
         frame_index = frame_number % len(self.dmx_frames)
         frame = self.dmx_frames[frame_index]
-        
-        # Update current frame display
-        with self._lock:
-            self.current_frame = f"Frame {frame_index} (Input: {frame_number})"
-        
-        # Log every frame for debugging
-        self.log_message(f"🎭 Received event: frame {frame_number}, sending DMX frame {frame_index} via {self.protocol}")
-        
+        self.current_frame = f"Frame {frame_index} (Input: {frame_number})"
         if self.protocol == 'serial' and hasattr(self, 'serial_conn') and self.serial_conn:
             try:
-                # Send DMX data with proper protocol formatting
-                if self._send_dmx_serial(frame):
-                    self.log_message(f"✅ Serial DMX frame sent successfully")
-                else:
-                    self.log_message(f"⚠️ Failed to send serial DMX frame")
+                self._send_dmx_serial(frame)
             except Exception as e:
                 self.log_message(f"Serial send error: {e}")
         elif self.protocol == 'artnet' and hasattr(self, 'artnet_sock') and self.artnet_sock:
             try:
                 artnet_packet = self._build_artnet_packet(frame)
                 self.artnet_sock.sendto(artnet_packet, (self.ip_address, self.port))
-                self.log_message(f"✅ Art-Net frame sent successfully")
             except Exception as e:
                 self.log_message(f"Art-Net send error: {e}")
         elif self.protocol == 'sacn' and hasattr(self, 'sacn_universe') and self.sacn_universe:
             try:
                 self.sacn_universe.dmx_data = frame
-                self.log_message(f"✅ sACN frame sent successfully")
             except Exception as e:
                 self.log_message(f"sACN send error: {e}")
         else:
@@ -296,10 +288,9 @@ class DMXOutputModule(ModuleBase):
 
     def get_display_data(self):
         """Return data for GUI display fields"""
-        with self._lock:
-            return {
-                'current_frame': self.current_frame
-            }
+        return {
+            'current_frame': self.current_frame
+        }
 
     def get_field_options(self, field_name):
         """Return options for a given field (for dropdowns, etc.), or None."""
