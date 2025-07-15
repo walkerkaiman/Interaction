@@ -6,3 +6,4 @@ numpy
 Pillow
 pyserial
 sacn
+psutil
