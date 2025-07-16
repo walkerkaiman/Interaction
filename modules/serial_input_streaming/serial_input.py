@@ -1,274 +1,150 @@
+import serial
 import threading
 import time
-import serial
-import serial.tools.list_ports
 from modules.module_base import ModuleBase
-import re
+from module_loader import get_thread_pool
 
 class SerialInputModule(ModuleBase):
-    def __init__(self, config, manifest, log_callback=print):
-        super().__init__(config, manifest, log_callback)
+    def __init__(self, config, manifest, log_callback=print, strategy=None):
+        super().__init__(config, manifest, log_callback, strategy=strategy)
         
-        # Serial connection parameters
-        self.port = config.get('port', '')
+        # Serial configuration
+        self.serial_port = config.get('serial_port', 'COM1')
         self.baud_rate = int(config.get('baud_rate', 9600))
         
-        # Serial connection state
-        self.serial_connection = None
-        self._running = False
-        self._thread = None
-        self._event_callbacks = set()
-        
-        # Data processing
-        self.last_received_data = "No data received"
+        # Serial connection
+        self.serial_conn = None
         self.connection_status = "Disconnected"
+        self.last_received_data = "No data received"
         
-        # Thread safety
-        self._lock = threading.Lock()
+        # Thread management
+        self._thread = None
+        self._running = False
         
-        # Data buffer for handling partial messages
-        self._buffer = ""
+        # Get optimized thread pool
+        self.thread_pool = get_thread_pool()
         
-        self.log_message(f"Serial Input initialized - Port: {self.port}, Baud: {self.baud_rate}")
+        # Event-driven timing
+        self._stop_event = threading.Event()
+        
+        self.log_message(f"Serial Input initialized - Port: {self.serial_port}, Baud: {self.baud_rate}")
 
     def start(self):
-        """Start the serial input module"""
-        if self._running:
-            self.log_message("⚠️ Serial module already running")
-            return
-            
-        self._running = True
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-        self.log_message("🚀 Serial input module started")
+        super().start()
+        if not self._running:
+            self._running = True
+            self._stop_event.clear()
+            # Use optimized thread pool instead of creating new thread
+            self._thread = self.thread_pool.submit_realtime(self._run)
+            self.log_message("🔌 Serial input started")
 
     def stop(self):
-        """
-        Stop the serial input module and clean up resources.
-        Ensures all threads and resources are properly released.
-        """
         self._running = False
-        self._disconnect()
+        self._stop_event.set()  # Signal thread to stop
         if self._thread:
-            self.log_message("[DEBUG] Joining serial input thread...")
-            self._thread.join(timeout=2)
+            self._thread.cancel()  # Cancel the thread pool task
             self._thread = None
-        self.log_message("🛑 Serial input module stopped")
+        self._close_serial()
+        self.log_message("🛑 Serial input stopped")
 
-    def add_event_callback(self, callback):
-        """Add a callback for data events"""
-        self._event_callbacks.add(callback)
+    def _open_serial(self):
+        """Open serial connection with event-driven retry logic"""
+        try:
+            if self.serial_conn and self.serial_conn.is_open:
+                return True
+                
+            self.serial_conn = serial.Serial(
+                port=self.serial_port,
+                baudrate=self.baud_rate,
+                timeout=1
+            )
+            self.connection_status = "Connected"
+            self.log_message(f"✅ Connected to {self.serial_port} @ {self.baud_rate} baud")
+            return True
+        except Exception as e:
+            self.connection_status = f"Error: {str(e)}"
+            self.log_message(f"❌ Failed to connect to {self.serial_port}: {e}")
+            return False
 
-    def remove_event_callback(self, callback):
-        """Remove a callback for data events"""
-        self._event_callbacks.discard(callback)
+    def _close_serial(self):
+        """Close serial connection"""
+        if self.serial_conn:
+            try:
+                self.serial_conn.close()
+                self.log_message(f"🔌 Disconnected from {self.serial_port}")
+            except Exception as e:
+                self.log_message(f"⚠️ Error closing serial connection: {e}")
+            self.serial_conn = None
+        self.connection_status = "Disconnected"
+
+    def _run(self):
+        """Main serial reading loop - optimized with event-driven approach"""
+        while self._running and not self._stop_event.is_set():
+            try:
+                # Try to open connection if not connected
+                if not self._open_serial():
+                    # Use event-driven wait instead of sleep
+                    if self._stop_event.wait(2):  # Wait 2 seconds or until stop signal
+                        break
+                    continue
+                
+                # Read data with timeout
+                if self.serial_conn and self.serial_conn.in_waiting > 0:
+                    try:
+                        data = self.serial_conn.readline().decode('utf-8').strip()
+                        if data:
+                            self.last_received_data = data
+                            
+                            # Emit streaming event
+                            event_data = {
+                                "value": data,
+                                "timestamp": time.time()
+                            }
+                            self.emit_event(event_data)
+                    except UnicodeDecodeError:
+                        self.log_message("⚠️ Invalid data received (encoding error)")
+                    except Exception as e:
+                        self.log_message(f"⚠️ Error reading serial data: {e}")
+                
+                # Use event-driven wait instead of sleep
+                if self._stop_event.wait(0.01):  # Wait 10ms or until stop signal
+                    break
+                    
+            except Exception as e:
+                self.log_message(f"❌ Error in serial loop: {e}")
+                self._close_serial()
+                # Use event-driven wait for reconnection
+                if self._stop_event.wait(2):  # Wait 2 seconds or until stop signal
+                    break
 
     def update_config(self, config):
         """Update the module configuration"""
-        old_port = self.port
+        old_port = self.serial_port
         old_baud = self.baud_rate
         
-        self.port = config.get('port', self.port)
+        self.serial_port = config.get('serial_port', self.serial_port)
         self.baud_rate = int(config.get('baud_rate', self.baud_rate))
         
-        # If port or baud rate changed, reconnect
-        if old_port != self.port or old_baud != self.baud_rate:
-            self.log_message(f"🔄 Serial config updated - Port: {self.port}, Baud: {self.baud_rate}")
+        # Reconnect if port or baud rate changed
+        if old_port != self.serial_port or old_baud != self.baud_rate:
+            self.log_message(f"🔄 Serial config updated - Port: {self.serial_port}, Baud: {self.baud_rate}")
             if self._running:
-                self._reconnect()
+                self._close_serial()
 
     def auto_configure(self):
-        """
-        If no port is set, select the first available port and update config.
-        """
-        if not self.port:
-            ports = self.get_available_ports()
-            if ports:
-                self.port = ports[0]
-                self.config['port'] = self.port
-                self.log_message(f"[Auto-configure] Selected port: {self.port}")
-
-    def _connect(self):
-        """Establish serial connection"""
-        if not self.port:
-            self.connection_status = "No port selected"
-            return False
-            
-        try:
-            self._disconnect()  # Close any existing connection
-            
-            self.serial_connection = serial.Serial(
-                port=self.port,
-                baudrate=self.baud_rate,
-                timeout=1,  # 1 second timeout for reads
-                write_timeout=1,  # 1 second timeout for writes
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE
-            )
-            
-            # Wait a moment for connection to stabilize
-            time.sleep(0.1)
-            
-            if self.serial_connection.is_open:
-                self.connection_status = "Connected"
-                self.log_message(f"✅ Connected to {self.port} at {self.baud_rate} baud")
-                return True
-            else:
-                self.connection_status = "Connection failed"
-                self.log_message(f"❌ Failed to connect to {self.port}")
-                return False
-                
-        except serial.SerialException as e:
-            self.connection_status = f"Error: {str(e)}"
-            self.log_message(f"❌ Serial connection error: {e}")
-            return False
-        except Exception as e:
-            self.connection_status = f"Error: {str(e)}"
-            self.log_message(f"❌ Unexpected error connecting to {self.port}: {e}")
-            return False
-
-    def _disconnect(self):
-        """Close serial connection"""
-        if self.serial_connection and self.serial_connection.is_open:
-            try:
-                self.serial_connection.close()
-                self.log_message(f"🔌 Disconnected from {self.port}")
-            except Exception as e:
-                self.log_message(f"⚠️ Error closing connection: {e}")
-        
-        self.serial_connection = None
-        self.connection_status = "Disconnected"
-
-    def _reconnect(self):
-        """Reconnect to the serial port"""
-        self.log_message("🔄 Reconnecting to serial port...")
-        self._disconnect()
-        time.sleep(0.5)  # Brief delay before reconnecting
-        self._connect()
-
-    def _parse_data(self, raw_data):
-        """
-        Parse incoming serial data and extract values.
-        Handles integers, floats, and strings with proper trimming.
-        """
-        try:
-            # Decode bytes to string
-            if isinstance(raw_data, bytes):
-                data_str = raw_data.decode('utf-8', errors='ignore')
-            else:
-                data_str = str(raw_data)
-            
-            # Strip whitespace from beginning and end
-            data_str = data_str.strip()
-            
-            if not data_str:
-                return None
-            
-            # Try to parse as different data types
-            # First, try as integer
-            try:
-                if data_str.isdigit() or (data_str.startswith('-') and data_str[1:].isdigit()):
-                    return str(int(data_str))
-            except ValueError:
-                pass
-            
-            # Try as float
-            try:
-                float_val = float(data_str)
-                # If it's a whole number, return as integer string
-                if float_val.is_integer():
-                    return str(int(float_val))
-                else:
-                    return str(float_val)
-            except ValueError:
-                pass
-            
-            # If not a number, return as string (already stripped)
-            return data_str
-            
-        except Exception as e:
-            self.log_message(f"⚠️ Error parsing data '{raw_data}': {e}")
-            return None
-
-    def _run(self):
-        """Main serial reading loop"""
-        while self._running:
-            try:
-                # Try to connect if not connected
-                if not self.serial_connection or not self.serial_connection.is_open:
-                    if not self._connect():
-                        time.sleep(2)  # Wait before retrying
-                        continue
-                
-                # Read data from serial port
-                if self.serial_connection and self.serial_connection.in_waiting > 0:
-                    try:
-                        # Read available data
-                        data = self.serial_connection.read(self.serial_connection.in_waiting)
-                        
-                        if data:
-                            # Add to buffer and process
-                            self._buffer += data.decode('utf-8', errors='ignore')
-                            
-                            # Process complete lines or chunks
-                            lines = self._buffer.split('\n')
-                            self._buffer = lines.pop()  # Keep incomplete line in buffer
-                            
-                            for line in lines:
-                                line = line.strip()
-                                if line:  # Skip empty lines
-                                    parsed_value = self._parse_data(line)
-                                    if parsed_value is not None:
-                                        self._on_serial_data(parsed_value, self.port, time.time())
-                                        
-                    except serial.SerialException as e:
-                        self.log_message(f"⚠️ Serial read error: {e}")
-                        self._reconnect()
-                        continue
-                    except Exception as e:
-                        self.log_message(f"⚠️ Error processing serial data: {e}")
-                        continue
-                
-                # Small delay to prevent busy waiting
-                time.sleep(0.01)
-                
-            except Exception as e:
-                self.log_message(f"❌ Error in serial read loop: {e}")
-                time.sleep(1)
-
-    def _on_serial_data(self, value, port, timestamp):
-        # Called when new serial data is received
-        event = {
-            'value': value,
-            'current_value': value,
-            'port': port,
-            'timestamp': timestamp
-        }
-        for callback in self._event_callbacks:
-            callback(event)
-        self.log_message(f"Serial Input Streaming emitting event: {event}")
+        """Set default values if not configured"""
+        if not getattr(self, 'serial_port', None):
+            self.serial_port = 'COM1'
+            self.config['serial_port'] = 'COM1'
+            self.log_message("[Auto-configure] Set default serial port: COM1")
+        if not getattr(self, 'baud_rate', None):
+            self.baud_rate = 9600
+            self.config['baud_rate'] = 9600
+            self.log_message("[Auto-configure] Set default baud rate: 9600")
 
     def get_display_data(self):
         """Return data for GUI display fields"""
-        with self._lock:
-            return {
-                'connection_status': self.connection_status,
-                'incoming_data': self.last_received_data
-            }
-
-    @staticmethod
-    def get_available_ports():
-        """Get list of available serial ports"""
-        try:
-            ports = []
-            for port in serial.tools.list_ports.comports():
-                ports.append(port.device)
-            return ports
-        except Exception:
-            return []
-
-    def update_display(self):
-        """Update the GUI display with current status and data"""
-        # This method can be called by the GUI to update status labels
-        pass 
+        return {
+            'connection_status': self.connection_status,
+            'last_received_data': self.last_received_data
+        } 

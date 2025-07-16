@@ -274,12 +274,15 @@ class DMXOutputModule(ModuleBase):
                 if not event.get('trigger', False):
                     return
                 
-                # Start chase in a separate thread
-                if self.chase_thread and self.chase_thread.is_alive():
-                    self.chase_thread.join(timeout=0.1)  # Wait briefly for previous chase to finish
+                # Start chase in a separate thread using optimized thread pool
+                if self.chase_thread and not self.chase_thread.done():
+                    # Cancel previous chase if still running
+                    self.chase_thread.cancel()
                 
-                self.chase_thread = threading.Thread(target=self._play_chase, daemon=True)
-                self.chase_thread.start()
+                # Use optimized thread pool instead of creating new thread
+                from module_loader import get_thread_pool
+                thread_pool = get_thread_pool()
+                self.chase_thread = thread_pool.submit_realtime(self._play_chase)
                 return
                 
             elif self.current_mode == "streaming":

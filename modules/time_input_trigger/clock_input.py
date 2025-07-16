@@ -2,178 +2,128 @@ import threading
 import time
 from datetime import datetime, timedelta
 from modules.module_base import ModuleBase
+from module_loader import get_thread_pool
 
 class ClockInputModule(ModuleBase):
-    def __init__(self, config, manifest, log_callback=print):
-        super().__init__(config, manifest, log_callback)
-        self.target_time = config.get('target_time', '12:00:00')
-        self.current_time = None
-        self.countdown = None
-        self._running = False
+    def __init__(self, config, manifest, log_callback=print, strategy=None):
+        super().__init__(config, manifest, log_callback, strategy=strategy)
+        
+        # Time configuration
+        self.target_time = config.get('target_time', '')
+        self.time_format = config.get('time_format', '%H:%M:%S')
+        
+        # Thread management
         self._thread = None
-        self._event_callbacks = set()
-        self._last_fired = None
+        self._running = False
+        
+        # Get optimized thread pool
+        self.thread_pool = get_thread_pool()
+        
+        self.log_message(f"Clock Input initialized - Target: {self.target_time}")
 
     def start(self):
-        super().start()  # Ensure state transitions and EventRouter notifications
-        self._running = True
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        super().start()
+        if not self._running:
+            self._running = True
+            # Use optimized thread pool instead of creating new thread
+            self._thread = self.thread_pool.submit_realtime(self._run)
+            self.log_message("🕐 Clock input started")
 
     def stop(self):
-        """
-        Stop the clock input module and clean up resources.
-        Ensures all threads and resources are properly released.
-        """
         self._running = False
         if self._thread:
-            self.log_callback("[DEBUG] Joining clock input thread...")
-            self._thread.join(timeout=2)
+            self._thread.cancel()  # Cancel the thread pool task
             self._thread = None
-        self.log_callback("🛑 Clock input module stopped")
-
-    def add_event_callback(self, callback):
-        self._event_callbacks.add(callback)
-
-    def remove_event_callback(self, callback):
-        self._event_callbacks.discard(callback)
-
-    def update_config(self, config):
-        old_target = self.target_time
-        self.target_time = config.get('target_time', self.target_time)
-        self.log_callback(f"🔄 Clock: update_config called with config: {config}")
-        self.log_callback(f"🔄 Clock: Target time updated from {old_target} to {self.target_time}")
-        # Optionally reset last fired so it can fire again if target changes
-        self._last_fired = None
-
-    def auto_configure(self):
-        """
-        If no target_time is set, set it to now + 1 hour.
-        """
-        import datetime
-        if not getattr(self, 'target_time', None):
-            now = datetime.datetime.now()
-            target = now + datetime.timedelta(hours=1)
-            self.target_time = target.strftime('%H:%M:%S')
-            self.config['target_time'] = self.target_time
-            self.log_message(f"[Auto-configure] Set default target_time: {self.target_time}")
-
-    def _calculate_countdown(self, current_time_str, target_time_str):
-        """Calculate the time difference between current and target time."""
-        try:
-            # Parse current time
-            current_dt = datetime.strptime(current_time_str, '%H:%M:%S').replace(
-                year=datetime.now().year, 
-                month=datetime.now().month, 
-                day=datetime.now().day
-            )
-            
-            # Parse target time
-            target_dt = datetime.strptime(target_time_str, '%H:%M:%S').replace(
-                year=datetime.now().year, 
-                month=datetime.now().month, 
-                day=datetime.now().day
-            )
-            
-            # If target time is earlier today, assume it's for tomorrow
-            if target_dt <= current_dt:
-                target_dt += timedelta(days=1)
-            
-            # Calculate difference
-            time_diff = target_dt - current_dt
-            total_seconds = int(time_diff.total_seconds())
-            
-            if total_seconds <= 0:
-                return "00:00:00"
-            
-            hours = total_seconds // 3600
-            minutes = (total_seconds % 3600) // 60
-            seconds = total_seconds % 60
-            
-            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-        except Exception as e:
-            self.log_callback(f"⚠️ Error calculating countdown: {e}")
-            return "--:--:--"
+        self.log_message("🛑 Clock input stopped")
 
     def _run(self):
+        """Main clock loop - optimized to use event-driven approach instead of sleep"""
         while self._running:
-            now = datetime.now().strftime('%H:%M:%S')
-            self.current_time = now
-            
-            # Calculate countdown
-            self.countdown = self._calculate_countdown(now, self.target_time)
-            
-            # Update the GUI display if available
-            if hasattr(self, 'update_display'):
-                self.update_display()
-            
-            # Always emit event for current time and countdown (event-driven GUI update)
-            event = {
-                'current_time': self.current_time,
-                'countdown': self.countdown,
-                'timestamp': time.time(),
-                'trigger': False
-            }
-            for cb in list(self._event_callbacks):
-                try:
-                    cb(event)
-                except Exception as e:
-                    self.log_callback(f"⚠️ Error in clock event callback: {e}")
-            
-            # Check if target time matches current time
-            if self.target_time == now and self._last_fired != now:
-                self.log_callback(f"🎯 Clock: Target time {self.target_time} matches current time {now} - firing event!")
-                event = {
-                    'current_time': now,
-                    'target_time': self.target_time,
-                    'countdown': self.countdown,
-                    'timestamp': time.time(),
-                    'trigger': True
-                }
-                for cb in list(self._event_callbacks):
+            try:
+                current_time = datetime.now()
+                current_time_str = current_time.strftime(self.time_format)
+                
+                # Calculate countdown if target time is set
+                countdown_str = "--:--:--"
+                if self.target_time:
                     try:
-                        cb(event)
-                    except Exception as e:
-                        self.log_callback(f"⚠️ Error in clock event callback: {e}")
-                self._last_fired = now
-            time.sleep(1)  # Update every second
+                        target_dt = datetime.strptime(self.target_time, self.time_format)
+                        # Set target to today with the specified time
+                        target_dt = current_time.replace(
+                            hour=target_dt.hour,
+                            minute=target_dt.minute,
+                            second=target_dt.second,
+                            microsecond=0
+                        )
+                        
+                        # If target time has passed today, set it to tomorrow
+                        if target_dt <= current_time:
+                            target_dt += timedelta(days=1)
+                        
+                        time_diff = target_dt - current_time
+                        total_seconds = int(time_diff.total_seconds())
+                        
+                        if total_seconds > 0:
+                            hours = total_seconds // 3600
+                            minutes = (total_seconds % 3600) // 60
+                            seconds = total_seconds % 60
+                            countdown_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                        else:
+                            countdown_str = "00:00:00"
+                    except ValueError:
+                        countdown_str = "Invalid time"
+                
+                # Create event data
+                event_data = {
+                    "current_time": current_time_str,
+                    "countdown": countdown_str,
+                    "target_time": self.target_time
+                }
+                
+                # Check if we should trigger (when countdown reaches zero)
+                if countdown_str == "00:00:00" and self.target_time:
+                    event_data["trigger"] = True
+                
+                # Emit the event
+                self.emit_event(event_data)
+                
+                # Use event-driven approach: wait for next second boundary
+                # Instead of sleep(1), calculate time to next second
+                now = datetime.now()
+                next_second = now.replace(microsecond=0) + timedelta(seconds=1)
+                wait_time = (next_second - now).total_seconds()
+                
+                if wait_time > 0 and self._running:
+                    # Use threading.Event for precise timing instead of sleep
+                    event = threading.Event()
+                    event.wait(wait_time)
+                
+            except Exception as e:
+                self.log_message(f"❌ Error in clock loop: {e}")
+                # Brief pause on error to prevent tight loop
+                if self._running:
+                    threading.Event().wait(1)
 
-    def update_display(self):
-        """Update the GUI display with current time."""
-        # This method can be called by the GUI to update the current time label
-        pass
+    def update_config(self, config):
+        """Update the module configuration"""
+        old_target = self.target_time
+        self.target_time = config.get('target_time', self.target_time)
+        self.time_format = config.get('time_format', self.time_format)
+        
+        if old_target != self.target_time:
+            self.log_message(f"🔄 Target time updated: {self.target_time}")
+
+    def auto_configure(self):
+        """Set default target time if none is configured"""
+        if not getattr(self, 'target_time', None):
+            self.target_time = '12:00:00'
+            self.config['target_time'] = '12:00:00'
+            self.log_message("[Auto-configure] Set default target time: 12:00:00")
 
     def get_display_data(self):
-        """Return data for GUI display fields."""
+        """Return data for GUI display fields"""
+        current_time = datetime.now().strftime(self.time_format)
         return {
-            'current_time': self.current_time or '--:--:--',
-            'target_time': self.target_time,
-            'countdown': self.countdown or '--:--:--'
-        } 
-
-    def emit_current_state(self):
-        """Immediately emit the current time and countdown to all registered callbacks (trigger: False)."""
-        now = datetime.now().strftime('%H:%M:%S')
-        self.current_time = now
-        self.countdown = self._calculate_countdown(now, self.target_time)
-        event = {
-            'current_time': self.current_time,
-            'countdown': self.countdown,
-            'timestamp': time.time(),
-            'trigger': False
-        }
-        for cb in list(self._event_callbacks):
-            try:
-                cb(event)
-            except Exception as e:
-                self.log_callback(f"⚠️ Error in clock event callback: {e}") 
-
-    def _on_time_reached(self, target_time, current_time):
-        # Called when the target time is reached
-        event_data = {
-            'target_time': target_time,
             'current_time': current_time,
-            'triggered': True
-        }
-        self.emit_event(event_data)
-        self.log_message(f"Clock Input emitting event: {event_data}") 
+            'countdown': '--:--:--'  # Will be calculated in the main loop
+        } 

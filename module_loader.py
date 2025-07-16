@@ -27,9 +27,603 @@ import os
 import sys
 import json
 import importlib.util
-from typing import Dict, List, Any, Optional, Type
+import threading
+import queue
+import time
+import weakref
+from typing import Dict, List, Any, Optional, Type, Callable, Set
+from collections import OrderedDict
 from modules.module_base import ModuleBase, TriggerStrategy, StreamingStrategy
 from abc import ABC, abstractmethod
+from enum import Enum
+import concurrent.futures
+from dataclasses import dataclass
+
+# High-Performance Thread Pool - Integrated from performance package
+class TaskPriority(Enum):
+    """Task priority levels for real-time processing"""
+    CRITICAL = 0    # Real-time events (OSC, audio triggers)
+    HIGH = 1        # User interface updates
+    NORMAL = 2      # Background processing
+    LOW = 3         # Cleanup, maintenance tasks
+
+@dataclass
+class Task:
+    """Represents a task in the thread pool"""
+    func: Callable
+    args: tuple
+    kwargs: dict
+    priority: TaskPriority
+    timestamp: float
+    future: Optional[concurrent.futures.Future] = None
+
+class OptimizedThreadPool:
+    """
+    High-performance thread pool optimized for real-time applications.
+    
+    This thread pool is specifically designed for interactive art installations
+    where low latency and predictable performance are critical. It provides:
+    
+    - Priority-based task scheduling
+    - Pre-allocated worker threads
+    - Automatic scaling based on load
+    - Memory-efficient task queuing
+    - Real-time performance monitoring
+    """
+    
+    def __init__(self, min_threads: int = 2, max_threads: int = 8, 
+                 thread_name_prefix: str = "InteractionWorker"):
+        """
+        Initialize the optimized thread pool.
+        
+        Args:
+            min_threads: Minimum number of threads to maintain
+            max_threads: Maximum number of threads to create
+            thread_name_prefix: Prefix for thread names
+        """
+        self.min_threads = min_threads
+        self.max_threads = max_threads
+        self.thread_name_prefix = thread_name_prefix
+        
+        # Priority queues for different task types
+        self.task_queues = {
+            TaskPriority.CRITICAL: queue.Queue(),
+            TaskPriority.HIGH: queue.Queue(),
+            TaskPriority.NORMAL: queue.Queue(),
+            TaskPriority.LOW: queue.Queue()
+        }
+        
+        # Worker thread management
+        self.workers = []
+        self.worker_lock = threading.Lock()
+        self.shutdown_event = threading.Event()
+        
+        # Performance monitoring
+        self.tasks_processed = 0
+        self.total_processing_time = 0.0
+        self.active_tasks = 0
+        self.stats_lock = threading.Lock()
+        
+        # Initialize core worker threads
+        self._create_workers(min_threads)
+        
+        # Start monitoring thread for automatic scaling
+        self.monitor_thread = threading.Thread(
+            target=self._monitor_performance,
+            name=f"{thread_name_prefix}-Monitor",
+            daemon=True
+        )
+        self.monitor_thread.start()
+    
+    def _create_workers(self, count: int):
+        """Create worker threads"""
+        with self.worker_lock:
+            for i in range(count):
+                worker = threading.Thread(
+                    target=self._worker_loop,
+                    name=f"{self.thread_name_prefix}-{len(self.workers) + 1}",
+                    daemon=True
+                )
+                worker.start()
+                self.workers.append(worker)
+    
+    def _worker_loop(self):
+        """Main worker thread loop with priority-based task processing"""
+        while not self.shutdown_event.is_set():
+            task = self._get_next_task()
+            if task is None:
+                continue
+                
+            # Execute task with performance monitoring
+            start_time = time.time()
+            try:
+                with self.stats_lock:
+                    self.active_tasks += 1
+                
+                result = task.func(*task.args, **task.kwargs)
+                
+                if task.future:
+                    task.future.set_result(result)
+                    
+            except Exception as e:
+                if task.future:
+                    task.future.set_exception(e)
+                # Log error but continue processing
+                print(f"❌ Task execution error: {e}")
+            finally:
+                processing_time = time.time() - start_time
+                with self.stats_lock:
+                    self.active_tasks -= 1
+                    self.tasks_processed += 1
+                    self.total_processing_time += processing_time
+    
+    def _get_next_task(self) -> Optional[Task]:
+        """Get the next task based on priority"""
+        # Check queues in priority order
+        for priority in TaskPriority:
+            try:
+                task = self.task_queues[priority].get_nowait()
+                return task
+            except queue.Empty:
+                continue
+        
+        # If no tasks available, wait on critical queue with timeout
+        try:
+            task = self.task_queues[TaskPriority.CRITICAL].get(timeout=0.1)
+            return task
+        except queue.Empty:
+            return None
+    
+    def submit(self, func: Callable, *args, priority: TaskPriority = TaskPriority.NORMAL, 
+               **kwargs) -> concurrent.futures.Future:
+        """
+        Submit a task to the thread pool.
+        
+        Args:
+            func: Function to execute
+            *args: Arguments for the function
+            priority: Task priority level
+            **kwargs: Keyword arguments for the function
+            
+        Returns:
+            Future object for the task result
+        """
+        if self.shutdown_event.is_set():
+            raise RuntimeError("Thread pool is shut down")
+        
+        future = concurrent.futures.Future()
+        task = Task(
+            func=func,
+            args=args,
+            kwargs=kwargs,
+            priority=priority,
+            timestamp=time.time(),
+            future=future
+        )
+        
+        self.task_queues[priority].put(task)
+        return future
+    
+    def submit_realtime(self, func: Callable, *args, **kwargs) -> concurrent.futures.Future:
+        """Submit a real-time critical task (OSC events, audio triggers)"""
+        return self.submit(func, *args, priority=TaskPriority.CRITICAL, **kwargs)
+    
+    def submit_ui(self, func: Callable, *args, **kwargs) -> concurrent.futures.Future:
+        """Submit a UI update task"""
+        return self.submit(func, *args, priority=TaskPriority.HIGH, **kwargs)
+    
+    def _monitor_performance(self):
+        """Monitor thread performance and scale workers as needed"""
+        while not self.shutdown_event.is_set():
+            time.sleep(5.0)  # Check every 5 seconds
+            
+            with self.stats_lock:
+                avg_processing_time = (self.total_processing_time / max(self.tasks_processed, 1))
+                queue_sizes = {p: q.qsize() for p, q in self.task_queues.items()}
+                total_queued = sum(queue_sizes.values())
+            
+            # Scale up if we have high load
+            if total_queued > len(self.workers) * 2 and len(self.workers) < self.max_threads:
+                self._create_workers(1)
+            # Scale down if we have low load and excess workers
+            elif total_queued < len(self.workers) // 2 and len(self.workers) > self.min_threads:
+                # Workers will naturally exit when no tasks are available
+                pass
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get performance statistics"""
+        with self.stats_lock:
+            avg_processing_time = (self.total_processing_time / max(self.tasks_processed, 1))
+            queue_sizes = {p.name: q.qsize() for p, q in self.task_queues.items()}
+            
+            return {
+                "active_workers": len(self.workers),
+                "active_tasks": self.active_tasks,
+                "tasks_processed": self.tasks_processed,
+                "avg_processing_time": avg_processing_time,
+                "queue_sizes": queue_sizes,
+                "total_processing_time": self.total_processing_time
+            }
+    
+    def shutdown(self, wait: bool = True):
+        """Shutdown the thread pool"""
+        self.shutdown_event.set()
+        if wait:
+            for worker in self.workers:
+                worker.join(timeout=1.0)
+
+# Global thread pool instance
+_global_thread_pool = None
+
+def get_thread_pool() -> OptimizedThreadPool:
+    """Get the global thread pool instance"""
+    global _global_thread_pool
+    if _global_thread_pool is None:
+        _global_thread_pool = OptimizedThreadPool()
+    return _global_thread_pool
+
+def shutdown_global_thread_pool():
+    """Shutdown the global thread pool"""
+    global _global_thread_pool
+    if _global_thread_pool:
+        _global_thread_pool.shutdown()
+        _global_thread_pool = None
+
+# High-Performance Configuration Cache - Integrated from performance package
+@dataclass
+class CacheEntry:
+    """Represents a cached configuration entry"""
+    data: Dict[str, Any]
+    file_path: str
+    last_modified: float
+    last_accessed: float
+    access_count: int
+
+class ConfigCache:
+    """
+    High-performance configuration cache with intelligent change detection.
+    
+    This cache provides fast access to configuration files by keeping them
+    in memory and only reloading when the underlying file changes. It uses
+    modification timestamps for efficient change detection and LRU eviction
+    for memory management.
+    """
+    
+    def __init__(self, max_entries: int = 100, check_interval: float = 1.0):
+        """
+        Initialize the configuration cache.
+        
+        Args:
+            max_entries: Maximum number of cached entries
+            check_interval: Interval in seconds for file change checking
+        """
+        self.max_entries = max_entries
+        self.check_interval = check_interval
+        
+        # Cache storage with LRU ordering
+        self.cache: OrderedDict[str, CacheEntry] = OrderedDict()
+        self.cache_lock = threading.RLock()
+        
+        # File watching for hot-reload
+        self.watched_files: Set[str] = set()
+        self.file_watchers: Dict[str, list] = {}
+        
+        # Performance statistics
+        self.stats = {
+            "hits": 0,
+            "misses": 0,
+            "reloads": 0,
+            "errors": 0
+        }
+        self.stats_lock = threading.Lock()
+        
+        # Background thread for file monitoring
+        self.monitor_thread = threading.Thread(
+            target=self._monitor_files,
+            name="ConfigCache-Monitor",
+            daemon=True
+        )
+        self.stop_monitoring = threading.Event()
+        self.monitor_thread.start()
+    
+    def get(self, file_path: str, default: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Get configuration from cache or load from file.
+        
+        Args:
+            file_path: Path to the configuration file
+            default: Default value if file doesn't exist or is invalid
+            
+        Returns:
+            Configuration dictionary
+        """
+        abs_path = os.path.abspath(file_path)
+        
+        with self.cache_lock:
+            # Check if we have a cached entry
+            if abs_path in self.cache:
+                entry = self.cache[abs_path]
+                
+                # Check if file has been modified
+                if os.path.exists(abs_path):
+                    current_mtime = os.path.getmtime(abs_path)
+                    
+                    if current_mtime <= entry.last_modified:
+                        # Cache hit - update access info
+                        entry.last_accessed = time.time()
+                        entry.access_count += 1
+                        self.cache.move_to_end(abs_path)  # LRU update
+                        
+                        with self.stats_lock:
+                            self.stats["hits"] += 1
+                        
+                        return entry.data.copy()
+                    else:
+                        # File modified - need to reload
+                        self._reload_file(abs_path)
+                        return self.cache[abs_path].data.copy()
+                else:
+                    # File was deleted
+                    del self.cache[abs_path]
+                    self.watched_files.discard(abs_path)
+                    return default or {}
+            
+            # Cache miss - load from file
+            return self._load_file(abs_path, default)
+    
+    def _load_file(self, file_path: str, default: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Load configuration file and add to cache"""
+        if not os.path.exists(file_path):
+            with self.stats_lock:
+                self.stats["misses"] += 1
+            return default or {}
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # Create cache entry
+            entry = CacheEntry(
+                data=data,
+                file_path=file_path,
+                last_modified=os.path.getmtime(file_path),
+                last_accessed=time.time(),
+                access_count=1
+            )
+            
+            # Add to cache with LRU eviction
+            self.cache[file_path] = entry
+            self.cache.move_to_end(file_path)
+            
+            # Evict oldest entries if cache is full
+            while len(self.cache) > self.max_entries:
+                self.cache.popitem(last=False)
+            
+            # Add to watched files
+            self.watched_files.add(file_path)
+            
+            with self.stats_lock:
+                self.stats["misses"] += 1
+            
+            return data.copy()
+            
+        except (json.JSONDecodeError, IOError) as e:
+            with self.stats_lock:
+                self.stats["errors"] += 1
+            
+            print(f"❌ Error loading config {file_path}: {e}")
+            return default or {}
+    
+    def _reload_file(self, file_path: str):
+        """Reload a file that has been modified"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # Update existing cache entry
+            entry = self.cache[file_path]
+            entry.data = data
+            entry.last_modified = os.path.getmtime(file_path)
+            entry.last_accessed = time.time()
+            entry.access_count += 1
+            
+            # Move to end for LRU
+            self.cache.move_to_end(file_path)
+            
+            with self.stats_lock:
+                self.stats["reloads"] += 1
+            
+            # Notify file watchers
+            self._notify_watchers(file_path, data)
+            
+        except (json.JSONDecodeError, IOError) as e:
+            with self.stats_lock:
+                self.stats["errors"] += 1
+            print(f"❌ Error reloading config {file_path}: {e}")
+    
+    def save(self, file_path: str, data: Dict[str, Any], indent: int = 2):
+        """
+        Save configuration to file and update cache.
+        
+        Args:
+            file_path: Path to save the configuration
+            data: Configuration data to save
+            indent: JSON indentation level
+        """
+        abs_path = os.path.abspath(file_path)
+        
+        try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+            
+            # Save to file
+            with open(abs_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=indent, ensure_ascii=False)
+            
+            # Update cache
+            with self.cache_lock:
+                entry = CacheEntry(
+                    data=data.copy(),
+                    file_path=abs_path,
+                    last_modified=os.path.getmtime(abs_path),
+                    last_accessed=time.time(),
+                    access_count=1
+                )
+                
+                self.cache[abs_path] = entry
+                self.cache.move_to_end(abs_path)
+                self.watched_files.add(abs_path)
+            
+            # Notify watchers
+            self._notify_watchers(abs_path, data)
+            
+        except IOError as e:
+            with self.stats_lock:
+                self.stats["errors"] += 1
+            print(f"❌ Error saving config {file_path}: {e}")
+            raise
+    
+    def watch(self, file_path: str, callback: Callable[[str, Dict[str, Any]], None]):
+        """
+        Register a callback for file changes.
+        
+        Args:
+            file_path: Path to watch
+            callback: Function to call when file changes
+        """
+        abs_path = os.path.abspath(file_path)
+        
+        if abs_path not in self.file_watchers:
+            self.file_watchers[abs_path] = []
+        
+        self.file_watchers[abs_path].append(callback)
+        self.watched_files.add(abs_path)
+    
+    def _notify_watchers(self, file_path: str, data: Dict[str, Any]):
+        """Notify all watchers of a file change"""
+        if file_path in self.file_watchers:
+            for callback in self.file_watchers[file_path]:
+                try:
+                    callback(file_path, data)
+                except Exception as e:
+                    print(f"❌ Error in config watcher callback: {e}")
+    
+    def _monitor_files(self):
+        """Background thread to monitor file changes"""
+        while not self.stop_monitoring.is_set():
+            try:
+                with self.cache_lock:
+                    files_to_check = list(self.watched_files)
+                
+                for file_path in files_to_check:
+                    if file_path in self.cache:
+                        if os.path.exists(file_path):
+                            current_mtime = os.path.getmtime(file_path)
+                            cached_mtime = self.cache[file_path].last_modified
+                            
+                            if current_mtime > cached_mtime:
+                                self._reload_file(file_path)
+                        else:
+                            # File was deleted
+                            with self.cache_lock:
+                                if file_path in self.cache:
+                                    del self.cache[file_path]
+                                self.watched_files.discard(file_path)
+                
+            except Exception as e:
+                print(f"❌ Error in file monitoring: {e}")
+            
+            self.stop_monitoring.wait(self.check_interval)
+    
+    def invalidate(self, file_path: str):
+        """Invalidate a specific cache entry"""
+        abs_path = os.path.abspath(file_path)
+        
+        with self.cache_lock:
+            if abs_path in self.cache:
+                del self.cache[abs_path]
+            self.watched_files.discard(abs_path)
+    
+    def clear(self):
+        """Clear all cache entries"""
+        with self.cache_lock:
+            self.cache.clear()
+            self.watched_files.clear()
+            self.file_watchers.clear()
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get cache performance statistics"""
+        with self.stats_lock:
+            total_requests = self.stats["hits"] + self.stats["misses"]
+            hit_rate = (self.stats["hits"] / total_requests * 100) if total_requests > 0 else 0
+            
+            return {
+                "cache_size": len(self.cache),
+                "hit_rate": hit_rate,
+                "total_requests": total_requests,
+                "watched_files": len(self.watched_files),
+                **self.stats
+            }
+    
+    def shutdown(self):
+        """Shutdown the cache and monitoring thread"""
+        self.stop_monitoring.set()
+        if self.monitor_thread.is_alive():
+            self.monitor_thread.join(timeout=2.0)
+        
+        self.clear()
+        print("🛑 Configuration cache shutdown complete")
+
+# Global configuration cache instance
+_global_config_cache = None
+
+def get_config_cache() -> ConfigCache:
+    """Get the global configuration cache instance"""
+    global _global_config_cache
+    if _global_config_cache is None:
+        _global_config_cache = ConfigCache()
+    return _global_config_cache
+
+def get_config(file_path: str, default: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Convenient function to get configuration using the global cache.
+    
+    Args:
+        file_path: Path to the configuration file
+        default: Default value if file doesn't exist
+        
+    Returns:
+        Configuration dictionary
+    """
+    return get_config_cache().get(file_path, default)
+
+def save_config(file_path: str, data: Dict[str, Any], indent: int = 2):
+    """
+    Convenient function to save configuration using the global cache.
+    
+    Args:
+        file_path: Path to save the configuration
+        data: Configuration data to save
+        indent: JSON indentation level
+    """
+    get_config_cache().save(file_path, data, indent)
+
+def watch_config(file_path: str, callback: Callable[[str, Dict[str, Any]], None]):
+    """
+    Convenient function to watch configuration changes using the global cache.
+    
+    Args:
+        file_path: Path to watch
+        callback: Function to call when file changes
+    """
+    get_config_cache().watch(file_path, callback)
+
+def shutdown_config_cache():
+    """Shutdown the global configuration cache"""
+    global _global_config_cache
+    if _global_config_cache:
+        _global_config_cache.shutdown()
+        _global_config_cache = None
 
 class InputEventRouter:
     """

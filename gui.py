@@ -6,10 +6,11 @@ import time
 from module_loader import ModuleLoader
 import threading
 from PIL import Image, ImageTk
-from modules.audio_output_trigger.audio_output import AudioOutputModule
+from modules.audio_output.audio_output import AudioOutputModule
 from module_loader import input_event_router
 from module_loader import create_and_start_module
-from performance import get_config, save_config, get_message_router
+from module_loader import get_config, save_config
+from message_router import get_message_router
 import traceback
 import json  # Only for formatting, not for config loading
 
@@ -169,8 +170,10 @@ class InteractionBlock:
             self.input_mode = None  # Store mode for input module
             self.output_mode = None  # Store mode for output module
             self.cursor_running = True
-            self.cursor_thread = threading.Thread(target=self._cursor_animation_loop, daemon=True)
-            self.cursor_thread.start()
+            # Use optimized thread pool for cursor animation
+            from module_loader import get_thread_pool
+            thread_pool = get_thread_pool()
+            self.cursor_thread = thread_pool.submit_realtime(self._cursor_animation_loop)
             if self.gui_ref and hasattr(self.gui_ref, 'threads'):
                 self.gui_ref.threads.append(self.cursor_thread)
             self.osc_input_key = None
@@ -325,7 +328,7 @@ class InteractionBlock:
                 # Special handling for dmx_output_streaming serial_port dropdown
                 if field["name"] == "serial_port" and module_name == "dmx_output_streaming":
                     try:
-                        from modules.dmx_output_streaming.dmx_output_streaming import get_available_serial_ports
+                        from modules.dmx_output.dmx_output_streaming import get_available_serial_ports
                         port_options = get_available_serial_ports()
                         if not port_options:
                             port_options = ["No ports available"]
@@ -579,7 +582,9 @@ class InteractionBlock:
     def remove_self(self):
         self.cursor_running = False
         if hasattr(self, 'cursor_thread') and self.cursor_thread:
-            self.cursor_thread.join(timeout=1)
+            # Cancel the thread pool task instead of joining
+            if hasattr(self.cursor_thread, 'cancel'):
+                self.cursor_thread.cancel()
             self.cursor_thread = None
         # Unregister input event callback if any
         if self.input_event_key and self.input_event_callback:

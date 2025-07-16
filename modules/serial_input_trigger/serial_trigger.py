@@ -1,382 +1,198 @@
+import serial
 import threading
 import time
-import serial
-import serial.tools.list_ports
 from modules.module_base import ModuleBase
-import struct
+from module_loader import get_thread_pool
 
 class SerialTriggerModule(ModuleBase):
-    def __init__(self, config, manifest, log_callback=print):
-        super().__init__(config, manifest, log_callback)
+    def __init__(self, config, manifest, log_callback=print, strategy=None):
+        super().__init__(config, manifest, log_callback, strategy=strategy)
         
-        # Serial connection parameters
-        self.port = config.get('port', '')
+        # Serial configuration
+        self.serial_port = config.get('serial_port', 'COM1')
         self.baud_rate = int(config.get('baud_rate', 9600))
-        
-        # Logic parameters
         self.logic_operator = config.get('logic_operator', '>')
-        self.threshold_value = float(config.get('threshold_value', 0))
+        self.threshold_value = float(config.get('threshold_value', 0.5))
         
-        # Serial connection state
-        self.serial_connection = None
-        self._running = False
-        self._thread = None
-        self._event_callbacks = set()
-        
-        # Data processing
-        self.current_value = None
+        # Serial connection
+        self.serial_conn = None
         self.connection_status = "Disconnected"
-        self.trigger_status = "Waiting"
+        self.last_received_data = "No data received"
         
-        # Thread safety
-        self._lock = threading.Lock()
+        # Thread management
+        self._thread = None
+        self._running = False
         
-        # Data buffer for handling partial messages
-        self._buffer = b""
+        # Get optimized thread pool
+        self.thread_pool = get_thread_pool()
         
-        # Crossing detection state
-        self._last_triggered = False
-        self._crossing_state = {
-            '<': False,  # True when value is below threshold
-            '>': False   # True when value is above threshold
-        }
+        # Event-driven timing
+        self._stop_event = threading.Event()
         
-        self.log_message(f"Serial Trigger initialized - Port: {self.port}, Baud: {self.baud_rate}, Logic: {self.logic_operator} {self.threshold_value}")
-        self.log_message(f"🔗 Initial callback count: {len(self._event_callbacks)}")
+        self.log_message(f"Serial Trigger initialized - Port: {self.serial_port}, Baud: {self.baud_rate}")
 
     def start(self):
-        """Start the serial trigger module"""
-        # Ensure config is set from the latest config dict before connecting
-        self.port = self.config.get('port', self.port)
-        self.baud_rate = int(self.config.get('baud_rate', self.baud_rate))
-        self.logic_operator = self.config.get('logic_operator', self.logic_operator)
-        self.threshold_value = float(self.config.get('threshold_value', self.threshold_value))
-        if self._running:
-            self.log_message("⚠️ Serial trigger module already running")
-            return
-        self._running = True
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-        self.log_message("🚀 Serial trigger module started")
+        super().start()
+        if not self._running:
+            self._running = True
+            self._stop_event.clear()
+            # Use optimized thread pool instead of creating new thread
+            self._thread = self.thread_pool.submit_realtime(self._run)
+            self.log_message("🔌 Serial trigger started")
 
     def stop(self):
-        """
-        Stop the serial trigger module and clean up resources.
-        Ensures all threads and resources are properly released.
-        """
         self._running = False
-        self._disconnect()
+        self._stop_event.set()  # Signal thread to stop
         if self._thread:
-            self.log_message("[DEBUG] Joining serial trigger thread...")
-            self._thread.join(timeout=2)
+            self._thread.cancel()  # Cancel the thread pool task
             self._thread = None
-        self.log_message("🛑 Serial trigger module stopped")
+        self._close_serial()
+        self.log_message("🛑 Serial trigger stopped")
 
-    def add_event_callback(self, callback):
-        """Add a callback for trigger events"""
-        self._event_callbacks.add(callback)
-        self.log_message(f"🔗 Added event callback. Total callbacks: {len(self._event_callbacks)}")
+    def _open_serial(self):
+        """Open serial connection with event-driven retry logic"""
+        try:
+            if self.serial_conn and self.serial_conn.is_open:
+                return True
+                
+            self.serial_conn = serial.Serial(
+                port=self.serial_port,
+                baudrate=self.baud_rate,
+                timeout=1
+            )
+            self.connection_status = "Connected"
+            self.log_message(f"✅ Connected to {self.serial_port} @ {self.baud_rate} baud")
+            return True
+        except Exception as e:
+            self.connection_status = f"Error: {str(e)}"
+            self.log_message(f"❌ Failed to connect to {self.serial_port}: {e}")
+            return False
 
-    def remove_event_callback(self, callback):
-        """Remove a callback for trigger events"""
-        self._event_callbacks.discard(callback)
-        self.log_message(f"🔗 Removed event callback. Total callbacks: {len(self._event_callbacks)}")
+    def _close_serial(self):
+        """Close serial connection"""
+        if self.serial_conn:
+            try:
+                self.serial_conn.close()
+                self.log_message(f"🔌 Disconnected from {self.serial_port}")
+            except Exception as e:
+                self.log_message(f"⚠️ Error closing serial connection: {e}")
+            self.serial_conn = None
+        self.connection_status = "Disconnected"
+
+    def _check_trigger_condition(self, value):
+        """Check if the value meets the trigger condition"""
+        try:
+            numeric_value = float(value)
+            if self.logic_operator == '>':
+                return numeric_value > self.threshold_value
+            elif self.logic_operator == '<':
+                return numeric_value < self.threshold_value
+            elif self.logic_operator == '>=':
+                return numeric_value >= self.threshold_value
+            elif self.logic_operator == '<=':
+                return numeric_value <= self.threshold_value
+            elif self.logic_operator == '==':
+                return numeric_value == self.threshold_value
+            elif self.logic_operator == '!=':
+                return numeric_value != self.threshold_value
+            else:
+                return False
+        except (ValueError, TypeError):
+            return False
+
+    def _run(self):
+        """Main serial reading loop - optimized with event-driven approach"""
+        while self._running and not self._stop_event.is_set():
+            try:
+                # Try to open connection if not connected
+                if not self._open_serial():
+                    # Use event-driven wait instead of sleep
+                    if self._stop_event.wait(2):  # Wait 2 seconds or until stop signal
+                        break
+                    continue
+                
+                # Read data with timeout
+                if self.serial_conn and self.serial_conn.in_waiting > 0:
+                    try:
+                        data = self.serial_conn.readline().decode('utf-8').strip()
+                        if data:
+                            self.last_received_data = data
+                            
+                            # Check trigger condition
+                            if self._check_trigger_condition(data):
+                                event_data = {
+                                    "value": data,
+                                    "trigger": True,
+                                    "threshold": self.threshold_value,
+                                    "operator": self.logic_operator
+                                }
+                                self.emit_event(event_data)
+                                self.log_message(f"🎯 Trigger fired: {data} {self.logic_operator} {self.threshold_value}")
+                            else:
+                                # Emit non-trigger event for display updates
+                                event_data = {
+                                    "value": data,
+                                    "trigger": False,
+                                    "threshold": self.threshold_value,
+                                    "operator": self.logic_operator
+                                }
+                                self.emit_event(event_data)
+                    except UnicodeDecodeError:
+                        self.log_message("⚠️ Invalid data received (encoding error)")
+                    except Exception as e:
+                        self.log_message(f"⚠️ Error reading serial data: {e}")
+                
+                # Use event-driven wait instead of sleep
+                if self._stop_event.wait(0.01):  # Wait 10ms or until stop signal
+                    break
+                    
+            except Exception as e:
+                self.log_message(f"❌ Error in serial loop: {e}")
+                self._close_serial()
+                # Use event-driven wait for reconnection
+                if self._stop_event.wait(2):  # Wait 2 seconds or until stop signal
+                    break
 
     def update_config(self, config):
         """Update the module configuration"""
-        old_port = self.port
+        old_port = self.serial_port
         old_baud = self.baud_rate
         old_operator = self.logic_operator
         old_threshold = self.threshold_value
         
-        self.port = config.get('port', self.port)
+        self.serial_port = config.get('serial_port', self.serial_port)
         self.baud_rate = int(config.get('baud_rate', self.baud_rate))
         self.logic_operator = config.get('logic_operator', self.logic_operator)
         self.threshold_value = float(config.get('threshold_value', self.threshold_value))
         
-        # Reset crossing state if logic parameters changed
-        if old_operator != self.logic_operator or old_threshold != self.threshold_value:
-            self._reset_crossing_state()
-            self.log_message(f"🔄 Logic updated: {self.logic_operator} {self.threshold_value}")
-        
-        # If port or baud rate changed, reconnect
-        if old_port != self.port or old_baud != self.baud_rate:
-            self.log_message(f"🔄 Serial config updated - Port: {self.port}, Baud: {self.baud_rate}")
+        # Reconnect if port or baud rate changed
+        if old_port != self.serial_port or old_baud != self.baud_rate:
+            self.log_message(f"🔄 Serial config updated - Port: {self.serial_port}, Baud: {self.baud_rate}")
             if self._running:
-                self._reconnect()
+                self._close_serial()
 
     def auto_configure(self):
-        """
-        If no port is set, select the first available port and update config. Set default baud rate if not set.
-        """
-        if not getattr(self, 'port', None):
-            from modules.serial_input_streaming.serial_input import SerialInputModule
-            ports = SerialInputModule.get_available_ports()
-            if ports:
-                self.port = ports[0]
-                self.config['port'] = self.port
-                self.log_message(f"[Auto-configure] Selected port: {self.port}")
+        """Set default values if not configured"""
+        if not getattr(self, 'serial_port', None):
+            self.serial_port = 'COM1'
+            self.config['serial_port'] = 'COM1'
+            self.log_message("[Auto-configure] Set default serial port: COM1")
         if not getattr(self, 'baud_rate', None):
             self.baud_rate = 9600
             self.config['baud_rate'] = 9600
             self.log_message("[Auto-configure] Set default baud rate: 9600")
-
-    def _connect(self):
-        """Establish serial connection"""
-        if not self.port:
-            self.connection_status = "No port selected"
-            return False
-            
-        try:
-            self._disconnect()  # Close any existing connection
-            
-            self.serial_connection = serial.Serial(
-                port=self.port,
-                baudrate=self.baud_rate,
-                timeout=1,  # 1 second timeout for reads
-                write_timeout=1,  # 1 second timeout for writes
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE
-            )
-            
-            # Wait a moment for connection to stabilize
-            time.sleep(0.1)
-            
-            if self.serial_connection.is_open:
-                self.connection_status = "Connected"
-                self.log_message(f"✅ Connected to {self.port} at {self.baud_rate} baud")
-                return True
-            else:
-                self.connection_status = "Connection failed"
-                self.log_message(f"❌ Failed to connect to {self.port}")
-                return False
-                
-        except serial.SerialException as e:
-            self.connection_status = f"Error: {str(e)}"
-            self.log_message(f"❌ Serial connection error: {e}")
-            return False
-        except Exception as e:
-            self.connection_status = f"Error: {str(e)}"
-            self.log_message(f"❌ Unexpected error connecting to {self.port}: {e}")
-            return False
-
-    def _disconnect(self):
-        """Close serial connection"""
-        if self.serial_connection and self.serial_connection.is_open:
-            try:
-                self.serial_connection.close()
-                self.log_message(f"🔌 Disconnected from {self.port}")
-            except Exception as e:
-                self.log_message(f"⚠️ Error closing connection: {e}")
-        
-        self.serial_connection = None
-        self.connection_status = "Disconnected"
-
-    def _reconnect(self):
-        """Reconnect to the serial port"""
-        self.log_message("🔄 Reconnecting to serial port...")
-        self._disconnect()
-        time.sleep(0.5)  # Brief delay before reconnecting
-        self._connect()
-
-    def _reset_crossing_state(self):
-        """Reset the crossing detection state"""
-        with self._lock:
-            self._crossing_state = {'<': False, '>': False}
-            self._last_triggered = False
-            self.trigger_status = "Waiting"
-
-    def _parse_serial_data(self, raw_data):
-        """
-        Parse incoming serial data as ASCII text and convert to float.
-        """
-        try:
-            data_str = raw_data.decode('utf-8', errors='ignore').strip()
-            if data_str:
-                return float(data_str), "float"
-            else:
-                return None, "empty"
-        except Exception as e:
-            self.log_message(f"⚠️ Error parsing serial data: {e}")
-            return None, "error"
-
-    def _evaluate_logic(self, value):
-        """
-        Evaluate the logic condition and determine if a trigger should fire.
-        Returns (should_trigger, reason)
-        """
-        if value is None:
-            return False, "No valid data"
-        
-        # Use lock to ensure thread safety for crossing state
-        with self._lock:
-            if self.logic_operator == "=":
-                # Equals logic: trigger when value exactly matches threshold
-                if abs(value - self.threshold_value) < 0.001:  # Small tolerance for floats
-                    return True, f"Value {value} equals threshold {self.threshold_value}"
-                return False, f"Value {value} != threshold {self.threshold_value}"
-            
-            elif self.logic_operator == "<":
-                # Less than logic: trigger when crossing below threshold
-                current_below = value < self.threshold_value
-                was_below = self._crossing_state['<']
-                
-                if current_below and not was_below:
-                    # Just crossed below threshold
-                    self._crossing_state['<'] = True
-                    return True, f"Value {value} crossed below {self.threshold_value}"
-                elif not current_below and was_below:
-                    # Just crossed above threshold (reset state)
-                    self._crossing_state['<'] = False
-                    return False, f"Value {value} crossed above {self.threshold_value} (reset)"
-                else:
-                    # No crossing - don't update state
-                    return False, f"Value {value} {'below' if current_below else 'above'} {self.threshold_value}"
-            
-            elif self.logic_operator == ">":
-                # Greater than logic: trigger when crossing above threshold
-                current_above = value > self.threshold_value
-                was_above = self._crossing_state['>']
-                
-                if current_above and not was_above:
-                    # Just crossed above threshold
-                    self._crossing_state['>'] = True
-                    return True, f"Value {value} crossed above {self.threshold_value}"
-                elif not current_above and was_above:
-                    # Just crossed below threshold (reset state)
-                    self._crossing_state['>'] = False
-                    return False, f"Value {value} crossed below {self.threshold_value} (reset)"
-                else:
-                    # No crossing - don't update state
-                    return False, f"Value {value} {'above' if current_above else 'below'} {self.threshold_value}"
-            
-            return False, f"Unknown operator: {self.logic_operator}"
-
-    def _run(self):
-        """Main serial reading loop"""
-        while self._running:
-            try:
-                # Try to connect if not connected
-                if not self.serial_connection or not self.serial_connection.is_open:
-                    if not self._connect():
-                        time.sleep(2)  # Wait before retrying
-                        continue
-                # Read data from serial port
-                if self.serial_connection and self.serial_connection.in_waiting > 0:
-                    try:
-                        # Read available data
-                        data = self.serial_connection.read(self.serial_connection.in_waiting)
-                        if data:
-                            # Add to buffer and process lines
-                            self._buffer += data
-                            while b'\n' in self._buffer:
-                                line, self._buffer = self._buffer.split(b'\n', 1)
-                                value, value_type = self._parse_serial_data(line)
-                                if value is not None:
-                                    self._handle_value(value, value_type)
-                    except serial.SerialException as e:
-                        self.log_message(f"⚠️ Serial read error: {e}")
-                        self._reconnect()
-                        continue
-                    except Exception as e:
-                        self.log_message(f"⚠️ Error processing serial data: {e}")
-                        continue
-                # Small delay to prevent busy waiting
-                time.sleep(0.01)
-            except Exception as e:
-                self.log_message(f"❌ Error in serial read loop: {e}")
-                time.sleep(1)
-
-    def _handle_value(self, value, value_type):
-        """Handle parsed value and evaluate logic"""
-        with self._lock:
-            self.current_value = value
-
-        # Removed per-value logging to reduce console noise
-
-        # Notify GUI of value update (for display purposes)
-        self.notify_gui_update()
-
-        # Evaluate logic condition for trigger
-        should_trigger, reason = self._evaluate_logic(value)
-        with self._lock:
-            if should_trigger:
-                self.trigger_status = f"Triggered: {reason}"
-                self._last_triggered = True
-            else:
-                self.trigger_status = f"Waiting: {reason}"
-
-        # Only fire trigger if condition is met
-        if should_trigger:
-            self._fire_trigger(value, value_type, reason)
-
-    def _fire_trigger(self, value, value_type, reason):
-        """Fire the trigger event"""
-        # Create event data
-        event = {
-            'value': value,
-            'current_value': value,
-            'value_type': value_type,
-            'threshold': self.threshold_value,
-            'operator': self.logic_operator,
-            'reason': reason,
-            'timestamp': time.time(),
-            'trigger': True
-        }
-        
-        self.log_message(f"🎯 TRIGGER: {reason} (Value: {value}, Type: {value_type})")
-        self.log_message(f"🎯 TRIGGER: Sending to {len(self._event_callbacks)} callbacks")
-        
-        # Send to all callbacks
-        for callback in list(self._event_callbacks):
-            try:
-                callback(event)
-                self.log_message(f"🎯 TRIGGER: Callback executed successfully")
-            except Exception as e:
-                self.log_message(f"❌ Error in trigger callback: {e}")
+        if not getattr(self, 'logic_operator', None):
+            self.logic_operator = '>'
+            self.config['logic_operator'] = '>'
+            self.log_message("[Auto-configure] Set default logic operator: >")
+        if not getattr(self, 'threshold_value', None):
+            self.threshold_value = 0.5
+            self.config['threshold_value'] = 0.5
+            self.log_message("[Auto-configure] Set default threshold: 0.5")
 
     def get_display_data(self):
         """Return data for GUI display fields"""
-        with self._lock:
-            return {
-                'connection_status': self.connection_status,
-                'current_value': f"{self.current_value:.1f}" if self.current_value is not None else "No data",
-                'trigger_status': self.trigger_status
-            }
-
-    def update_display(self):
-        """Update the GUI display with current status and data"""
-        # This method can be called by the GUI to update status labels
-        pass
-
-    def notify_gui_update(self):
-        """Notify GUI of value update (for display purposes only, not triggers)"""
-        if self.current_value is not None:
-            event = {
-                'value': f"{self.current_value:.1f}",
-                'current_value': self.current_value,
-                'value_type': 'float',
-                'threshold': self.threshold_value,
-                'operator': self.logic_operator,
-                'timestamp': time.time(),
-                'trigger': False,
-                'gui_update': True  # Flag to indicate this is just a GUI update
-            }
-            # Removed GUI Update logging to reduce console noise
-            for callback in list(self._event_callbacks):
-                try:
-                    callback(event)
-                except Exception as e:
-                    self.log_message(f"❌ Error in GUI update callback: {e}")
-
-    @staticmethod
-    def get_available_ports():
-        """Get list of available serial ports"""
-        try:
-            ports = []
-            for port in serial.tools.list_ports.comports():
-                ports.append(port.device)
-            return ports
-        except Exception:
-            return [] 
+        return {
+            'connection_status': self.connection_status,
+            'last_received_data': self.last_received_data
+        } 
