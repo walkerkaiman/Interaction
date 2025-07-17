@@ -88,7 +88,15 @@ class OSCOutputModule(ModuleBase):
     def stop(self):
         """Stop the unified OSC output module"""
         self._disconnect()
-        self.log_message("🛑 Unified OSC output module stopped")
+        super().stop()
+        self.log_message(f"🛑 Unified OSC output module stopped (instance {self.instance_id})")
+
+    def wait_for_stop(self):
+        """
+        Wait for any background tasks/threads to finish (future-proof).
+        """
+        # No background threads currently, but method is here for consistency
+        pass
 
     def update_config(self, config):
         """Update the module configuration"""

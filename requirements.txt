@@ -1,9 +1,23 @@
-pygame
-python-osc
-pydub
-matplotlib
-numpy
-Pillow
-pyserial
-sacn
-psutil
+# Core dependencies
+pygame>=2.5.0
+python-osc>=1.8.0
+pydub>=0.25.1
+matplotlib>=3.7.0
+numpy>=1.24.0
+Pillow>=10.0.0
+pyserial>=3.5
+sacn>=1.4.0
+psutil>=5.9.0
+
+# Web framework and async support
+aiohttp>=3.8.0
+aiohttp-cors>=0.7.0
+
+# Audio processing
+librosa>=0.10.0
+
+# Optional: Development and testing (uncomment if needed)
+# pytest>=7.0.0
+# pytest-asyncio>=0.21.0
+# black>=23.0.0
+# flake8>=6.0.0

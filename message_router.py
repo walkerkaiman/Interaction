@@ -23,16 +23,19 @@ Author: Interaction Framework Team
 License: MIT
 """
 
+import os
+import sys
+import json
 import threading
 import time
 import weakref
-from typing import Dict, List, Any, Callable, Optional, Tuple, Set
+from typing import Dict, List, Any, Optional, Callable, Set
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from enum import Enum
 import concurrent.futures
 import hashlib
-from module_loader import get_thread_pool, TaskPriority
+from utils.thread_pool_utils import get_thread_pool, TaskPriority
 
 # High-Performance Event Routing - Integrated from performance package
 class EventPriority(Enum):

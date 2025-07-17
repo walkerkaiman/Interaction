@@ -114,10 +114,6 @@ class SACNFramesInputModule(ModuleBase):
             self.log_message(f"❌ Failed to start sACN receiver: {e}")
     
     def stop(self):
-        """
-        Stop the sACN Frames Input Trigger module and clean up resources.
-        Ensures all threads and resources are properly released.
-        """
         super().stop()
         self.is_running = False
         # Stop sACN receiver if running
@@ -129,12 +125,18 @@ class SACNFramesInputModule(ModuleBase):
                 self.log_message(f"⚠️ Error stopping sACN receiver: {e}")
             self.receiver = None
         # Join any custom threads (if used)
+        self.wait_for_stop()
+        self.log_message(f"🛑 sACN frames input trigger module stopped (instance {self.instance_id})")
+
+    def wait_for_stop(self):
+        """
+        Wait for the receiver thread to finish (if used).
+        """
         if self.receiver_thread and hasattr(self.receiver_thread, 'is_alive'):
             if self.receiver_thread.is_alive():
-                self.log_message("[DEBUG] Joining receiver_thread...")
+                self.log_message("[DEBUG] Joining receiver_thread in wait_for_stop...")
                 self.receiver_thread.join(timeout=2)
             self.receiver_thread = None
-        self.log_message(f"[DEBUG] frames_input_trigger stop() completed and all references cleaned up")
     
     def _dmx_data_callback(self, packet):
         """

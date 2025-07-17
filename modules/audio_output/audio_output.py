@@ -649,14 +649,21 @@ class AudioOutputModule(ModuleBase):
         Note: pygame mixer is shared across all audio modules, so it's only
         stopped when all audio modules are stopped.
         """
-        super().stop()
         # Stop current playback
         if self.current_channel and self.current_channel.get_busy():
             self.current_channel.stop()
             self.current_channel = None
         # Clean up any additional resources here (threads, files, etc.)
         # (If you add threads or open files in the future, stop/close them here.)
-        self.log_message("🛑 Audio output stopped")
+        super().stop()
+        self.log_message(f"🛑 Audio output stopped (instance {self.instance_id})")
+
+    def wait_for_stop(self):
+        """
+        Wait for any background tasks/threads to finish (future-proof).
+        """
+        # No background threads currently, but method is here for consistency
+        pass
     
     def handle_event(self, event, settings=None):
         """

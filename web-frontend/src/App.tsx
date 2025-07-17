@@ -1,23 +1,27 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import { AppBar, Toolbar, Typography, Drawer, List, ListItem, ListItemText, Box, CssBaseline } from '@mui/material';
-import Dashboard from './pages/Dashboard';
-import Modules from './pages/Modules';
+import Wiki from './pages/Wiki';
 import Events from './pages/Events';
 import InteractionEditor from './pages/InteractionEditor';
 import Performance from './pages/Performance';
+import connectWebSocket from './api/ws';
+import ModuleWikiPage from './pages/ModuleWikiPage';
 
 const drawerWidth = 220;
 
 const navItems = [
-  { text: 'Dashboard', path: '/' },
-  { text: 'Modules', path: '/modules' },
-  { text: 'Events', path: '/events' },
-  { text: 'Interaction Editor', path: '/editor' },
+  { text: 'Wiki', path: '/modules' },
+  { text: 'Interactions', path: '/editor' },
+  { text: 'Console', path: '/events' },
   { text: 'Performance', path: '/performance' },
 ];
 
 const App: React.FC = () => {
+  useEffect(() => {
+    connectWebSocket();
+  }, []);
+
   return (
     <Router>
       <Box sx={{ display: 'flex' }}>
@@ -53,11 +57,12 @@ const App: React.FC = () => {
         <Box component="main" sx={{ flexGrow: 1, bgcolor: 'background.default', p: 3, ml: `${drawerWidth}px` }}>
           <Toolbar />
           <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/modules" element={<Modules />} />
-            <Route path="/events" element={<Events />} />
+            <Route path="/modules" element={<Wiki />} />
+            <Route path="/modules/:id" element={<ModuleWikiPage />} />
             <Route path="/editor" element={<InteractionEditor />} />
+            <Route path="/events" element={<Events />} />
             <Route path="/performance" element={<Performance />} />
+            <Route path="*" element={<Wiki />} />
           </Routes>
         </Box>
       </Box>

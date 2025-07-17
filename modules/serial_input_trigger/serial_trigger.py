@@ -45,9 +45,21 @@ class SerialTriggerModule(ModuleBase):
         self._stop_event.set()  # Signal thread to stop
         if self._thread:
             self._thread.cancel()  # Cancel the thread pool task
-            self._thread = None
+        super().stop()
         self._close_serial()
-        self.log_message("🛑 Serial trigger stopped")
+        self.log_message(f"🛑 Serial trigger stopped (instance {self.instance_id})")
+
+    def wait_for_stop(self):
+        """
+        Wait for the serial reading thread to finish.
+        """
+        # If using a thread pool future, wait for it to finish if possible
+        if self._thread and hasattr(self._thread, 'result'):
+            try:
+                self._thread.result(timeout=1)
+            except Exception:
+                pass
+        self._thread = None
 
     def _open_serial(self):
         """Open serial connection with event-driven retry logic"""

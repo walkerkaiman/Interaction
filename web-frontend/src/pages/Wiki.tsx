@@ -1,8 +1,9 @@
 import React, { useEffect } from 'react';
-import { Box, Typography, CircularProgress, Alert, List, ListItem, ListItemText, Paper } from '@mui/material';
+import { Box, Typography, CircularProgress, Alert, List, ListItem, ListItemText, Paper, ListItemButton } from '@mui/material';
 import { useModulesStore } from '../state/useModulesStore';
+import { Link } from 'react-router-dom';
 
-const Modules: React.FC = () => {
+const Wiki: React.FC = () => {
   const { modules, loading, error, fetchAll } = useModulesStore();
 
   useEffect(() => {
@@ -12,7 +13,7 @@ const Modules: React.FC = () => {
   return (
     <Box p={4}>
       <Typography variant="h4" gutterBottom>
-        Modules
+        Wiki
       </Typography>
       {loading && <CircularProgress />}
       {error && <Alert severity="error">{error}</Alert>}
@@ -26,10 +27,12 @@ const Modules: React.FC = () => {
             )}
             {modules.map((mod) => (
               <ListItem key={mod.id} divider>
-                <ListItemText
-                  primary={mod.name || mod.id}
-                  secondary={`Type: ${mod.type}`}
-                />
+                <ListItemButton component={Link} to={`/modules/${mod.id}`}>
+                  <ListItemText
+                    primary={mod.name || mod.id}
+                    secondary={`Type: ${mod.type}`}
+                  />
+                </ListItemButton>
               </ListItem>
             ))}
           </List>
@@ -39,4 +42,4 @@ const Modules: React.FC = () => {
   );
 };
 
-export default Modules; 
+export default Wiki; 

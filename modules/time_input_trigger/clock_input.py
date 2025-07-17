@@ -3,10 +3,12 @@ import time
 from datetime import datetime, timedelta
 from modules.module_base import ModuleBase
 from module_loader import get_thread_pool
+import uuid
 
 class ClockInputModule(ModuleBase):
     def __init__(self, config, manifest, log_callback=print, strategy=None):
         super().__init__(config, manifest, log_callback, strategy=strategy)
+        self.instance_id = str(uuid.uuid4())  # Unique ID for debugging
         
         # Time configuration
         self.target_time = config.get('target_time', '')
@@ -33,8 +35,20 @@ class ClockInputModule(ModuleBase):
         self._running = False
         if self._thread:
             self._thread.cancel()  # Cancel the thread pool task
-            self._thread = None
-        self.log_message("🛑 Clock input stopped")
+        super().stop()
+        self.wait_for_stop()
+        self.log_message(f"🛑 Clock input stopped (instance {self.instance_id})")
+
+    def wait_for_stop(self):
+        """
+        Wait for the clock thread to finish.
+        """
+        if self._thread and hasattr(self._thread, 'result'):
+            try:
+                self._thread.result(timeout=1)
+            except Exception:
+                pass
+        self._thread = None
 
     def _run(self):
         """Main clock loop - optimized to use event-driven approach instead of sleep"""
@@ -85,6 +99,7 @@ class ClockInputModule(ModuleBase):
                     event_data["trigger"] = True
                 
                 # Emit the event
+                event_data['instance_id'] = self.instance_id  # For debugging
                 self.emit_event(event_data)
                 
                 # Use event-driven approach: wait for next second boundary

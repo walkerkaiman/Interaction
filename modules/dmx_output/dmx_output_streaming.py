@@ -430,14 +430,22 @@ class DMXOutputModule(ModuleBase):
         return None
 
     def stop(self):
-        """
-        Stop the DMX Output module and clean up resources.
-        Ensures all threads and resources are properly released.
-        """
         super().stop()
         self._stop_chase()  # Stop any running chase
         self._close_protocol()
-        self.log_message("DMX Output module stopped.")
+        self.wait_for_stop()
+        self.log_message(f"DMX Output module stopped (instance {self.instance_id})")
+
+    def wait_for_stop(self):
+        """
+        Wait for the chase thread to finish (if running).
+        """
+        if self.chase_thread and hasattr(self.chase_thread, 'result'):
+            try:
+                self.chase_thread.result(timeout=2)
+            except Exception:
+                pass
+        self.chase_thread = None
 
 # Debug print to confirm class is defined
 print("🔧 DMXOutputModule class defined successfully") 

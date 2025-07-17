@@ -2129,7 +2129,10 @@ class InteractionGUI:
         if getattr(self, 'loading', False) or getattr(self, 'initializing', False):
             return  # Prevent saving during loading/initializing
         valid_blocks = [b for b in self.blocks if b.is_valid()]
-        config = [b.to_dict() for b in valid_blocks]
+        config = {
+            "installation_name": getattr(self, 'installation_name', 'Interactive Art Installation'),
+            "interactions": [b.to_dict() for b in valid_blocks]
+        }
         try:
             with open("config/interactions/interactions.json", "w") as f:
                 json.dump(config, f, indent=2)

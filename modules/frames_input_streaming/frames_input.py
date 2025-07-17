@@ -80,10 +80,6 @@ class SACNFramesInputStreamingModule(ModuleBase):
             self.log_message(f"❌ Failed to start sACN receiver: {e}")
 
     def stop(self):
-        """
-        Stop the sACN Frames Input Streaming module and clean up resources.
-        Ensures all threads and resources are properly released.
-        """
         super().stop()
         self.is_running = False
         # Stop sACN receiver if running
@@ -95,6 +91,13 @@ class SACNFramesInputStreamingModule(ModuleBase):
                 self.log_message(f"⚠️ Error stopping sACN receiver: {e}")
             self.receiver = None
         # Join any custom threads (if used in future)
+        self.wait_for_stop()
+        self.log_message(f"🛑 sACN streaming input module stopped (instance {self.instance_id})")
+
+    def wait_for_stop(self):
+        """
+        Wait for the receiver thread to finish (if used).
+        """
         if self.receiver_thread and hasattr(self.receiver_thread, 'is_alive'):
             if self.receiver_thread.is_alive():
                 self.receiver_thread.join(timeout=2)

@@ -24,6 +24,7 @@ import os
 from typing import Dict, Any, Callable, Optional
 from message_router import EventRouter
 from abc import ABC, abstractmethod
+import uuid
 
 class ModuleStrategy(ABC):
     @abstractmethod
@@ -114,6 +115,8 @@ class ModuleBase:
         self.state_obj: ModuleState = InitializedState()
         self.event_router.emit_state_change(self, self.state)
         self.log_message(f"Initializing {self.manifest.get('name', 'Unknown Module')}")
+        self.instance_id = str(uuid.uuid4())  # Unique ID for every module instance
+        self.module_id: Optional[str] = None  # Ensure module_id always exists
 
     def set_state(self, new_state: str):
         self.state = new_state
@@ -134,6 +137,15 @@ class ModuleBase:
 
     def stop(self):
         self.state_obj.stop(self)
+        self.wait_for_stop()
+        self.log_message(f"🛑 ModuleBase stopped (instance {self.instance_id})")
+
+    def wait_for_stop(self):
+        """
+        Subclasses should override this if they have background threads/tasks to join/cancel.
+        This method is called after stop() to ensure cleanup before a new instance is started.
+        """
+        pass
 
     def cleanup(self):
         self.set_state('cleaning_up')
@@ -141,6 +153,8 @@ class ModuleBase:
         self.set_state('cleaned_up')
 
     def emit_event(self, data: Dict[str, Any]):
+        data = dict(data)  # Copy to avoid mutating caller's dict
+        data['instance_id'] = self.instance_id  # Always include instance_id
         self.log_message(f"Emitting event: {data}")
         self.event_router.publish('module_event', {'module': self, 'data': data}, settings=self.config)
         # For backward compatibility, call direct callbacks

@@ -130,7 +130,6 @@ class OSCInputModule(ModuleBase):
         Note: The shared server manager will automatically stop the server
         if no other modules are listening on the same port.
         """
-        super().stop()
         try:
             # Unregister from the shared server manager
             self.server_manager.unregister_callback(self.port, self.address, self._handle_osc_message)
@@ -140,6 +139,15 @@ class OSCInputModule(ModuleBase):
             # (If you add threads or open files in the future, stop/close them here.)
         except Exception as e:
             self.log_message(f"❌ Error stopping OSC server: {e}")
+        super().stop()
+        self.log_message(f"🛑 OSC input module stopped (instance {self.instance_id})")
+
+    def wait_for_stop(self):
+        """
+        Wait for any background tasks/threads to finish (future-proof).
+        """
+        # No background threads currently, but method is here for consistency
+        pass
     
     def update_config(self, new_config: Dict[str, Any]):
         """
