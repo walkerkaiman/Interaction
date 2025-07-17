@@ -7,9 +7,10 @@ from modules.module_base import ModuleBase
 import serial  # pyserial
 import sacn
 from message_router import EventRouter
+from main import broadcast_log_message
 
 # Debug print to confirm module is being loaded
-print("🔧 DMX Output module file loaded successfully")
+broadcast_log_message("DMX Output module file loaded successfully", category='dmx')
 
 def get_available_serial_ports():
     """Get list of available serial ports for dropdown."""
@@ -34,7 +35,7 @@ class DMXOutputModule(ModuleBase):
             self.universe = int(config.get('universe', 1))
         except Exception:
             self.universe = 1
-            self.log_message("⚠️ Missing or invalid 'universe' in config, defaulting to 1")
+            broadcast_log_message("⚠️ Missing or invalid 'universe' in config, defaulting to 1", category='dmx')
         self.ip_address = config.get('ip_address', '127.0.0.1')
         self.port = int(config.get('port', SACN_PORT))
         self.serial_port = config.get('serial_port', 'COM1')
@@ -47,7 +48,7 @@ class DMXOutputModule(ModuleBase):
         self._last_config = None  # Track last config for efficient reload
         self._load_csv()
         self._setup_protocol()
-        self.log_message(f"DMX Output initialized with protocol: {self.protocol}")
+        broadcast_log_message(f"DMX Output initialized with protocol: {self.protocol}", category='dmx')
 
         # --- Adaptive mode additions ---
         self.current_mode = "unknown"  # "trigger", "streaming", or "unknown"
@@ -65,31 +66,31 @@ class DMXOutputModule(ModuleBase):
             self.connected_input_classification = classification
             if classification == "trigger":
                 self.current_mode = "trigger"
-                self.log_message(f"🔄 Switched to TRIGGER mode (chase through all frames at {self.fps} FPS)")
+                broadcast_log_message(f"🔄 Switched to TRIGGER mode (chase through all frames at {self.fps} FPS)", category='dmx')
             elif classification == "streaming":
                 self.current_mode = "streaming"
-                self.log_message(f"🔄 Switched to STREAMING mode (frame number from event)")
+                broadcast_log_message(f"🔄 Switched to STREAMING mode (frame number from event)", category='dmx')
             else:
                 self.current_mode = "unknown"
-                self.log_message(f"⚠️ Unknown input classification: {classification}")
+                broadcast_log_message(f"⚠️ Unknown input classification: {classification}", category='dmx')
 
     def _play_chase(self):
         """Play through all frames in the CSV file once at the specified FPS."""
         with self.chase_lock:
             if self.chase_running:
-                self.log_message("⚠️ Chase already running, ignoring trigger")
+                broadcast_log_message("⚠️ Chase already running, ignoring trigger", category='dmx')
                 return
             self.chase_running = True
         
         try:
             if not self.dmx_frames:
-                self.log_message("No DMX frames loaded for chase!")
+                broadcast_log_message("No DMX frames loaded for chase!", category='dmx')
                 return
             
             frame_delay = 1.0 / self.fps
             total_frames = len(self.dmx_frames)
             
-            self.log_message(f"🎭 Starting DMX chase: {total_frames} frames at {self.fps} FPS")
+            broadcast_log_message(f"🎭 Starting DMX chase: {total_frames} frames at {self.fps} FPS", category='dmx')
             
             for i, frame in enumerate(self.dmx_frames):
                 if not self.chase_running:
@@ -102,10 +103,10 @@ class DMXOutputModule(ModuleBase):
                 if i < total_frames - 1:
                     time.sleep(frame_delay)
             
-            self.log_message(f"✅ DMX chase completed: {total_frames} frames played")
+            broadcast_log_message(f"✅ DMX chase completed: {total_frames} frames played", category='dmx')
             
         except Exception as e:
-            self.log_message(f"❌ Error during DMX chase: {e}")
+            broadcast_log_message(f"❌ Error during DMX chase: {e}", category='dmx')
         finally:
             with self.chase_lock:
                 self.chase_running = False
@@ -115,7 +116,7 @@ class DMXOutputModule(ModuleBase):
         with self.chase_lock:
             if self.chase_running:
                 self.chase_running = False
-                self.log_message("🛑 DMX chase stopped")
+                broadcast_log_message("🛑 DMX chase stopped", category='dmx')
 
     def _load_csv(self):
         path = self.csv_file or os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config', 'default_dmx.csv')
@@ -133,9 +134,9 @@ class DMXOutputModule(ModuleBase):
                     self.dmx_frames.append(frame)
             if not self.dmx_frames:
                 raise ValueError('CSV contained no frames')
-            self.log_message(f"Loaded {len(self.dmx_frames)} DMX frames from CSV: {path}")
+            broadcast_log_message(f"Loaded {len(self.dmx_frames)} DMX frames from CSV: {path}", category='dmx')
         except Exception as e:
-            self.log_message(f"Error loading CSV '{path}': {e}. Using default.")
+            broadcast_log_message(f"Error loading CSV '{path}': {e}. Using default.", category='dmx')
             default_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config', 'default_dmx.csv')
             with open(default_path, 'r', newline='') as f:
                 reader = csv.reader(f)
@@ -145,7 +146,7 @@ class DMXOutputModule(ModuleBase):
                     if len(frame) < DMX_CHANNELS:
                         frame += [0] * (DMX_CHANNELS - len(frame))
                     self.dmx_frames.append(frame)
-            self.log_message(f"Loaded {len(self.dmx_frames)} DMX frames from default CSV.")
+            broadcast_log_message(f"Loaded {len(self.dmx_frames)} DMX frames from default CSV.", category='dmx')
 
     def _setup_protocol(self):
         # Only re-open serial if port or protocol changes
@@ -164,17 +165,17 @@ class DMXOutputModule(ModuleBase):
                     stopbits=serial.STOPBITS_TWO,
                     timeout=1
                 )
-                self.log_message(f"Serial port opened: {self.serial_port} @ 57600 baud (DMX512)")
+                broadcast_log_message(f"Serial port opened: {self.serial_port} @ 57600 baud (DMX512)", category='dmx')
             except Exception as e:
                 self.serial_conn = None
-                self.log_message(f"Error opening serial port: {e}")
+                broadcast_log_message(f"Error opening serial port: {e}", category='dmx')
         elif self.protocol == 'artnet':
             try:
                 self.artnet_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                self.log_message(f"Art-Net UDP socket ready: {self.ip_address}:{self.port}")
+                broadcast_log_message(f"Art-Net UDP socket ready: {self.ip_address}:{self.port}", category='dmx')
             except Exception as e:
                 self.artnet_sock = None
-                self.log_message(f"Error creating Art-Net socket: {e}")
+                broadcast_log_message(f"Error creating Art-Net socket: {e}", category='dmx')
         elif self.protocol == 'sacn':
             try:
                 self.sacn_sender = sacn.sACNsender()
@@ -182,27 +183,27 @@ class DMXOutputModule(ModuleBase):
                 self.sacn_universe = self.sacn_sender.activate_output(self.universe)
                 if self.sacn_universe is not None:
                     self.sacn_universe.multicast = True
-                self.log_message(f"sACN multicast sender started for universe {self.universe}")
+                broadcast_log_message(f"sACN multicast sender started for universe {self.universe}", category='dmx')
             except Exception as e:
                 self.sacn_sender = None
                 self.sacn_universe = None
-                self.log_message(f"Error starting sACN sender: {e}")
+                broadcast_log_message(f"Error starting sACN sender: {e}", category='dmx')
 
     def _close_protocol(self):
         # Clean up any protocol resources
         if hasattr(self, 'serial_conn') and self.serial_conn:
             try:
                 self.serial_conn.close()
-                self.log_message("🛑 Serial connection closed")
+                broadcast_log_message("🛑 Serial connection closed", category='dmx')
             except Exception as e:
-                self.log_message(f"⚠️ Error closing serial connection: {e}")
+                broadcast_log_message(f"⚠️ Error closing serial connection: {e}", category='dmx')
             self.serial_conn = None
         if hasattr(self, 'artnet_sock') and self.artnet_sock:
             try:
                 self.artnet_sock.close()
-                self.log_message("🛑 Art-Net socket closed")
+                broadcast_log_message("🛑 Art-Net socket closed", category='dmx')
             except Exception as e:
-                self.log_message(f"⚠️ Error closing Art-Net socket: {e}")
+                broadcast_log_message(f"⚠️ Error closing Art-Net socket: {e}", category='dmx')
             self.artnet_sock = None
         if hasattr(self, 'sacn_sender') and self.sacn_sender:
             try:
@@ -223,12 +224,12 @@ class DMXOutputModule(ModuleBase):
                 stop_thread.join(timeout=2)  # Wait max 2 seconds
                 
                 if stop_thread.is_alive():
-                    self.log_message("⚠️ sACN sender stop timed out, forcing cleanup")
+                    broadcast_log_message("⚠️ sACN sender stop timed out, forcing cleanup", category='dmx')
                 else:
-                    self.log_message("🛑 sACN sender stopped")
+                    broadcast_log_message("🛑 sACN sender stopped", category='dmx')
                     
             except Exception as e:
-                self.log_message(f"⚠️ Error stopping sACN sender: {e}")
+                broadcast_log_message(f"⚠️ Error stopping sACN sender: {e}", category='dmx')
             self.sacn_sender = None
             self.sacn_universe = None
 
@@ -264,7 +265,7 @@ class DMXOutputModule(ModuleBase):
         old_fps = self.fps
         self.fps = int(config.get('fps', self.fps))
         if old_fps != self.fps:
-            self.log_message(f"🔄 Chase FPS updated: {self.fps}")
+            broadcast_log_message(f"🔄 Chase FPS updated: {self.fps}", category='dmx')
 
     def handle_event(self, event, settings=None):
         # --- Adaptive event handling ---
@@ -292,7 +293,7 @@ class DMXOutputModule(ModuleBase):
                 except Exception:
                     frame_number = 0
                 if not self.dmx_frames:
-                    self.log_message("No DMX frames loaded!")
+                    broadcast_log_message("No DMX frames loaded!", category='dmx')
                     return
                 # Only send if frame number changes
                 if self._last_sent_frame_number == frame_number:
@@ -313,7 +314,7 @@ class DMXOutputModule(ModuleBase):
                     self.handle_event(event, settings)
                 return
         except Exception as e:
-            self.log_message(f"DMX handle_event error: {e}")
+            broadcast_log_message(f"DMX handle_event error: {e}", category='dmx')
 
     def _build_dmx_packet(self, dmx_data):
         """
@@ -347,7 +348,7 @@ class DMXOutputModule(ModuleBase):
         Send DMX data via serial using the working protocol format.
         """
         if not self.serial_conn or not self.serial_conn.is_open:
-            self.log_message("⚠️ Serial connection not available")
+            broadcast_log_message("⚠️ Serial connection not available", category='dmx')
             return False
         
         try:
@@ -358,10 +359,11 @@ class DMXOutputModule(ModuleBase):
             self.serial_conn.write(dmx_packet)
             self.serial_conn.flush()
             
+            broadcast_log_message("DMX frame sent", module=self.__class__.__name__, category='dmx')
             return True
             
         except Exception as e:
-            self.log_message(f"Serial DMX send error: {e}")
+            broadcast_log_message(f"Serial DMX send error: {e}", category='dmx')
             return False
 
     def _build_artnet_packet(self, dmx_data):
@@ -389,20 +391,20 @@ class DMXOutputModule(ModuleBase):
             try:
                 self._send_dmx_serial(frame)
             except Exception as e:
-                self.log_message(f"Serial send error: {e}")
+                broadcast_log_message(f"Serial send error: {e}", category='dmx')
         elif self.protocol == 'artnet' and hasattr(self, 'artnet_sock') and self.artnet_sock:
             try:
                 artnet_packet = self._build_artnet_packet(frame)
                 self.artnet_sock.sendto(artnet_packet, (self.ip_address, self.port))
             except Exception as e:
-                self.log_message(f"Art-Net send error: {e}")
+                broadcast_log_message(f"Art-Net send error: {e}", category='dmx')
         elif self.protocol == 'sacn' and hasattr(self, 'sacn_universe') and self.sacn_universe:
             try:
                 self.sacn_universe.dmx_data = frame
             except Exception as e:
-                self.log_message(f"sACN send error: {e}")
+                broadcast_log_message(f"sACN send error: {e}", category='dmx')
         else:
-            self.log_message(f"⚠️ No valid protocol connection for {self.protocol}")
+            broadcast_log_message(f"⚠️ No valid protocol connection for {self.protocol}", category='dmx')
 
     def start(self):
         super().start()
@@ -412,10 +414,10 @@ class DMXOutputModule(ModuleBase):
             # For now, accept all events; refine as needed for settings-based routing
             return True
         self.event_router.subscribe('module_event', self.handle_event, event_filter)
-        self.log_message(f"🎭 DMX Output started with protocol: {self.protocol}")
+        broadcast_log_message(f"🎭 DMX Output started with protocol: {self.protocol}", category='dmx')
         # Ensure protocol is properly set up
         self._setup_protocol()
-        self.log_message(f"🎭 DMX Output ready to send frames")
+        broadcast_log_message(f"🎭 DMX Output ready to send frames", category='dmx')
 
     def get_display_data(self):
         """Return data for GUI display fields"""
@@ -434,7 +436,7 @@ class DMXOutputModule(ModuleBase):
         self._stop_chase()  # Stop any running chase
         self._close_protocol()
         self.wait_for_stop()
-        self.log_message(f"DMX Output module stopped (instance {self.instance_id})")
+        broadcast_log_message(f"DMX Output module stopped (instance {self.instance_id})", category='dmx')
 
     def wait_for_stop(self):
         """
@@ -448,4 +450,4 @@ class DMXOutputModule(ModuleBase):
         self.chase_thread = None
 
 # Debug print to confirm class is defined
-print("🔧 DMXOutputModule class defined successfully") 
+broadcast_log_message("DMXOutputModule class defined successfully", category='dmx') 

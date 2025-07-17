@@ -31,6 +31,7 @@ from modules.module_base import ModuleBase
 from modules.osc_input_trigger.osc_server_manager import OSCServerManager
 # Import the shared input event router
 from module_loader import input_event_router
+from main import broadcast_log_message
 
 class OSCInputModule(ModuleBase):
     """
@@ -92,7 +93,7 @@ class OSCInputModule(ModuleBase):
         # No internal callback list needed
         
         # Log initialization
-        self.log_message(f"OSC Input initialized - Port: {self.port}, Address: {self.address}, Listening on all interfaces (0.0.0.0)")
+        broadcast_log_message(f"OSC Input initialized - Port: {self.port}, Address: {self.address}, Listening on all interfaces (0.0.0.0)", module=self.__class__.__name__, category='osc')
     
     def start(self):
         """
@@ -115,10 +116,10 @@ class OSCInputModule(ModuleBase):
             self.server_manager.register_callback(self.port, self.address, self._handle_osc_message)
             
             self.is_running = True
-            self.log_message(f"✅ OSC server started on port {self.port}, listening for '{self.address}' on all interfaces (0.0.0.0)")
+            broadcast_log_message(f"✅ OSC server started on port {self.port}, listening for '{self.address}' on all interfaces (0.0.0.0)", module=self.__class__.__name__, category='osc')
             
         except Exception as e:
-            self.log_message(f"❌ Failed to start OSC server: {e}")
+            broadcast_log_message(f"❌ Failed to start OSC server: {e}", module=self.__class__.__name__, category='osc')
             self.is_running = False
     
     def stop(self):
@@ -134,13 +135,13 @@ class OSCInputModule(ModuleBase):
             # Unregister from the shared server manager
             self.server_manager.unregister_callback(self.port, self.address, self._handle_osc_message)
             self.is_running = False
-            self.log_message(f"🛑 OSC server stopped on port {self.port}")
+            broadcast_log_message(f"🛑 OSC server stopped on port {self.port}", module=self.__class__.__name__, category='osc')
             # Clean up any additional resources here (threads, files, etc.)
             # (If you add threads or open files in the future, stop/close them here.)
         except Exception as e:
-            self.log_message(f"❌ Error stopping OSC server: {e}")
+            broadcast_log_message(f"❌ Error stopping OSC server: {e}", module=self.__class__.__name__, category='osc')
         super().stop()
-        self.log_message(f"🛑 OSC input module stopped (instance {self.instance_id})")
+        broadcast_log_message(f"🛑 OSC input module stopped (instance {self.instance_id})", module=self.__class__.__name__, category='osc')
 
     def wait_for_stop(self):
         """
@@ -175,7 +176,7 @@ class OSCInputModule(ModuleBase):
         
         # Check if server settings changed
         if old_port != self.port or old_address != self.address:
-            self.log_message(f"🔄 OSC configuration changed - Port: {self.port}, Address: {self.address}")
+            broadcast_log_message(f"🔄 OSC configuration changed - Port: {self.port}, Address: {self.address}", module=self.__class__.__name__, category='osc')
             
             # Restart the server with new settings
             if self.is_running:
@@ -190,11 +191,11 @@ class OSCInputModule(ModuleBase):
         if not getattr(self, 'port', None):
             self.port = 8000
             self.config['port'] = 8000
-            self.log_message("[Auto-configure] Set default OSC port: 8000")
+            broadcast_log_message("[Auto-configure] Set default OSC port: 8000", module=self.__class__.__name__, category='osc')
         if not getattr(self, 'address', None):
             self.address = '/trigger'
             self.config['address'] = '/trigger'
-            self.log_message("[Auto-configure] Set default OSC address: /trigger")
+            broadcast_log_message("[Auto-configure] Set default OSC address: /trigger", module=self.__class__.__name__, category='osc')
 
     def _handle_osc_message(self, address: str, *args):
         """
@@ -218,7 +219,7 @@ class OSCInputModule(ModuleBase):
             /volume 0.5 "main"     -> {"trigger": 0.5, "args": [0.5, "main"]}
         """
         try:
-            self.log_message(f"📡 OSC message received: {address} {args}")
+            broadcast_log_message(f"📡 OSC message received: {address} {args}", module=self.__class__.__name__, category='osc')
             # Convert OSC message to event data
             event_data = {"address": address, "args": args}
             # If the address matches the configured trigger, emit a trigger event
@@ -227,7 +228,7 @@ class OSCInputModule(ModuleBase):
                     event_data["trigger"] = args[0]
             self.emit_event(event_data)  # Uses EventRouter.publish
         except Exception as e:
-            self.log_message(f"❌ Error handling OSC message: {e}")
+            broadcast_log_message(f"❌ Error handling OSC message: {e}", module=self.__class__.__name__, category='osc')
     
     def get_server_status(self) -> Dict[str, Any]:
         """
@@ -258,11 +259,11 @@ class OSCInputModule(ModuleBase):
         external OSC client or network connection.
         """
         if self.is_running:
-            self.log_message("🧪 Sending test OSC trigger")
+            broadcast_log_message("🧪 Sending test OSC trigger", module=self.__class__.__name__, category='osc')
             # Dispatch a test event to the global router
             input_event_router.dispatch_event("osc_input", {"port": self.port, "address": self.address}, {"address": self.address, "args": [0.75], "trigger": 0.75, "timestamp": time.time()})
         else:
-            self.log_message("❌ Cannot test trigger - server not running")
+            broadcast_log_message("❌ Cannot test trigger - server not running", module=self.__class__.__name__, category='osc')
     
     def get_output_config(self) -> Dict[str, Any]:
         """
@@ -337,14 +338,14 @@ class OSCInputModule(ModuleBase):
         configuration is clicked. Currently supports 'reset' action.
         """
         if action_name == "reset":
-            self.log_message("🔄 Reset button pressed - restarting OSC server")
+            broadcast_log_message("🔄 Reset button pressed - restarting OSC server", module=self.__class__.__name__, category='osc')
             # Restart the server to clear any issues
             if self.is_running:
                 self.stop()
                 time.sleep(0.1)  # Brief delay to ensure cleanup
                 self.start()
-                self.log_message("✅ OSC server restarted after reset")
+                broadcast_log_message("✅ OSC server restarted after reset", module=self.__class__.__name__, category='osc')
             else:
-                self.log_message("⚠️ Cannot reset - server not running")
+                broadcast_log_message("⚠️ Cannot reset - server not running", module=self.__class__.__name__, category='osc')
         else:
-            self.log_message(f"⚠️ Unknown button action: {action_name}")
+            broadcast_log_message(f"⚠️ Unknown button action: {action_name}", module=self.__class__.__name__, category='osc')

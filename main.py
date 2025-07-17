@@ -31,6 +31,8 @@ import asyncio
 from aiohttp import web, WSMsgType
 import aiohttp_cors
 import json
+import aiohttp
+import shutil
 
 # Performance optimization imports - Integrated from performance package
 from utils.thread_pool_utils import get_thread_pool, shutdown_global_thread_pool
@@ -123,23 +125,23 @@ class PerformanceManager:
         try:
             # Initialize thread pool
             self.thread_pool = get_thread_pool()
-            print(f"✅ Thread pool initialized with {self.thread_pool.max_threads} max threads")
+            # print(f"✅ Thread pool initialized with {self.thread_pool.max_threads} max threads")
             
             # Initialize configuration cache
             self.config_cache = get_config_cache()
-            print("✅ Configuration cache initialized")
+            # print("✅ Configuration cache initialized")
             
             # Initialize optimized message router
             if self.optimization_level in [PerformanceLevel.MAXIMUM, PerformanceLevel.BALANCED]:
                 self.message_router = get_message_router()
-                print("✅ Optimized message router initialized")
+                # print("✅ Optimized message router initialized")
             
             # Initialize audio processor
             self.audio_processor = get_audio_processor()
-            print("✅ Optimized audio processor initialized")
+                # print("✅ Optimized audio processor initialized")
             
         except Exception as e:
-            print(f"❌ Error initializing performance components: {e}")
+            # print(f"❌ Error initializing performance components: {e}")
             self.enabled = False
     
     def _start_monitoring(self):
@@ -153,7 +155,7 @@ class PerformanceManager:
             daemon=True
         )
         self.monitoring_thread.start()
-        print("✅ Performance monitoring started")
+        # print("✅ Performance monitoring started")
     
     def _monitor_performance(self):
         """Monitor performance metrics continuously"""
@@ -176,7 +178,8 @@ class PerformanceManager:
                 self._auto_adjust_optimization(metrics)
                 
             except Exception as e:
-                print(f"❌ Error in performance monitoring: {e}")
+                # print(f"❌ Error in performance monitoring: {e}")
+                pass
             
             self.stop_monitoring.wait(self.monitoring_interval)
     
@@ -231,7 +234,8 @@ class PerformanceManager:
                 try:
                     callback(metrics)
                 except Exception as e:
-                    print(f"❌ Error in performance callback: {e}")
+                    # print(f"❌ Error in performance callback: {e}")
+                    pass
     
     def _auto_adjust_optimization(self, metrics: PerformanceMetrics):
         """Automatically adjust optimization level based on performance"""
@@ -249,7 +253,7 @@ class PerformanceManager:
         if level == self.optimization_level:
             return
         
-        print(f"🔄 Changing optimization level from {self.optimization_level.value} to {level.value}")
+        # print(f"🔄 Changing optimization level from {self.optimization_level.value} to {level.value}")
         
         # Shutdown current components
         self._shutdown_components()
@@ -318,16 +322,16 @@ class PerformanceManager:
         """Force optimization of a specific component"""
         if component == "thread_pool" and not self.thread_pool:
             self.thread_pool = get_thread_pool()
-            print("✅ Thread pool forced initialization")
+            # print("✅ Thread pool forced initialization")
         elif component == "config_cache" and not self.config_cache:
             self.config_cache = get_config_cache()
-            print("✅ Config cache forced initialization")
+            # print("✅ Config cache forced initialization")
         elif component == "message_router" and not self.message_router:
             self.message_router = get_message_router()
-            print("✅ Message router forced initialization")
+            # print("✅ Message router forced initialization")
         elif component == "audio_processor" and not self.audio_processor:
             self.audio_processor = get_audio_processor()
-            print("✅ Audio processor forced initialization")
+            # print("✅ Audio processor forced initialization")
     
     def _shutdown_components(self):
         """Shutdown performance components"""
@@ -341,7 +345,7 @@ class PerformanceManager:
     
     def shutdown(self):
         """Shutdown the performance manager"""
-        print("🛑 Shutting down performance manager...")
+        # print("🛑 Shutting down performance manager...")
         
         # Stop monitoring
         self.stop_monitoring.set()
@@ -354,7 +358,7 @@ class PerformanceManager:
         # Clear callbacks
         self.performance_callbacks.clear()
         
-        print("✅ Performance manager shutdown complete")
+        # print("✅ Performance manager shutdown complete")
 
 # Global performance manager instance
 _global_performance_manager = None
@@ -392,11 +396,17 @@ MAIN_EVENT_LOOP = None
 async def on_startup(app):
     global MAIN_EVENT_LOOP
     MAIN_EVENT_LOOP = asyncio.get_running_loop()
+    
+    # Start the test log broadcast task now that the event loop is running
+    # asyncio.create_task(test_log_broadcast())
+    # print("✅ Test log broadcast started")
 
 # Helper: Broadcast to all WebSocket clients
 def broadcast_ws_event(event: dict):
+    # print("Broadcasting event to clients:", event)  # Debug print
     msg = json.dumps(event)
     for ws in set(ws_clients):
+        # print("WS client:", ws)  # Debug print
         if not ws.closed:
             if MAIN_EVENT_LOOP and MAIN_EVENT_LOOP.is_running():
                 asyncio.run_coroutine_threadsafe(ws.send_str(msg), MAIN_EVENT_LOOP)
@@ -442,7 +452,7 @@ async def config_api(request):
 module_instances = []
 
 async def config_save(request):
-    print("[DEBUG] config_save handler called")
+    broadcast_log_message("Configuration saved", "System", "system")
     data = await request.json()
     config_file = Path(__file__).parent / "config" / "interactions" / "interactions.json"
     config_file.parent.mkdir(parents=True, exist_ok=True)
@@ -458,7 +468,7 @@ async def config_save(request):
     # Save new config first
     with open(config_file, 'w') as f:
         json.dump(data, f, indent=2)
-    print("[DEBUG] config file saved, about to stop modules")
+    broadcast_log_message("Config file saved, about to stop modules", "System", "system")
 
     # Reload config from disk to ensure latest values
     with open(config_file, 'r') as f:
@@ -471,9 +481,9 @@ async def config_save(request):
         try:
             instance.stop()
         except Exception as e:
-            print(f"[WARN] Failed to stop module: {e}")
+            broadcast_log_message(f"[WARN] Failed to stop module: {e}", "System", "system")
     module_instances = []
-    print("[DEBUG] modules stopped, about to start new modules")
+    broadcast_log_message("Modules stopped, about to start new modules", "System", "system")
 
     # Short delay to allow threads to exit
     import time as _time
@@ -487,18 +497,19 @@ async def config_save(request):
     for interaction in new_interactions:
         input_mod = interaction["input"]["module"]
         input_cfg = interaction["input"]["config"]
-        print(f"[DEBUG] Starting module {input_mod} with config: {input_cfg}")
+        broadcast_log_message(f"Starting module {input_mod} with config: {input_cfg}", "System", "system")
         mod_instance = create_and_start_module(loader, input_mod, input_cfg, event_callback=on_event)
-        mod_instance.module_id = input_mod  # Set module_id for API
-        module_instances.append(mod_instance)
-    print("[DEBUG] All new modules started")
+        if mod_instance is not None:
+            mod_instance.module_id = input_mod  # Set module_id for API
+            module_instances.append(mod_instance)
+    broadcast_log_message("All new modules started", "System", "system")
 
     broadcast_ws_event({"type": "config_update", "config": latest_config})
     return web.json_response({"status": "saved"})
 
 async def config_delete_interaction(request):
     """Delete a specific interaction by index and restart modules"""
-    print("[DEBUG] config_delete_interaction handler called")
+    # print("[DEBUG] config_delete_interaction handler called")
     data = await request.json()
     interaction_index = data.get("index")
     
@@ -522,12 +533,12 @@ async def config_delete_interaction(request):
     
     # Remove the interaction
     removed_interaction = interactions.pop(interaction_index)
-    print(f"[DEBUG] Removed interaction {interaction_index}: {removed_interaction}")
+    # print(f"[DEBUG] Removed interaction {interaction_index}: {removed_interaction}")
     
     # Save updated config
     with open(config_file, 'w') as f:
         json.dump(config_data, f, indent=2)
-    print("[DEBUG] Updated config saved, about to stop modules")
+    # print("[DEBUG] Updated config saved, about to stop modules")
 
     # Stop all previous module instances
     global module_instances
@@ -535,9 +546,10 @@ async def config_delete_interaction(request):
         try:
             instance.stop()
         except Exception as e:
-            print(f"[WARN] Failed to stop module: {e}")
+            # print(f"[WARN] Failed to stop module: {e}")
+            pass
     module_instances = []
-    print("[DEBUG] modules stopped, about to start new modules")
+    # print("[DEBUG] modules stopped, about to start new modules")
 
     # Short delay to allow threads to exit
     import time as _time
@@ -551,11 +563,12 @@ async def config_delete_interaction(request):
     for interaction in interactions:
         input_mod = interaction["input"]["module"]
         input_cfg = interaction["input"]["config"]
-        print(f"[DEBUG] Starting module {input_mod} with config: {input_cfg}")
+        # print(f"[DEBUG] Starting module {input_mod} with config: {input_cfg}")
         mod_instance = create_and_start_module(loader, input_mod, input_cfg, event_callback=on_event)
-        mod_instance.module_id = input_mod  # Set module_id for API
-        module_instances.append(mod_instance)
-    print("[DEBUG] All new modules started")
+        if mod_instance is not None:
+            mod_instance.module_id = input_mod  # Set module_id for API
+            module_instances.append(mod_instance)
+    # print("[DEBUG] All new modules started")
 
     broadcast_ws_event({"type": "config_update", "config": config_data})
     return web.json_response({"status": "deleted", "removed_interaction": removed_interaction})
@@ -564,13 +577,14 @@ async def ws_events(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     ws_clients.add(ws)
+    # print("WebSocket client connected. Total clients:", len(ws_clients))  # Debug print
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
-                # Optionally handle incoming messages
                 pass
     finally:
         ws_clients.remove(ws)
+        # print("WebSocket client disconnected. Total clients:", len(ws_clients))  # Debug print
     return ws
 
 async def module_manifest(request):
@@ -579,6 +593,59 @@ async def module_manifest(request):
     if not manifest_path.exists():
         return web.Response(status=404, text='Manifest not found')
     return web.FileResponse(manifest_path)
+
+async def waveform_handler(request):
+    filename = request.match_info['filename']
+    waveform_path = Path(__file__).parent / "modules/audio_output" / "waveform" / filename
+    if not waveform_path.exists():
+        return web.Response(status=404, text='Waveform not found')
+    return web.FileResponse(waveform_path)
+
+async def browse_audio_files(request):
+    """List available audio files on the server"""
+    try:
+        # Default audio directory - can be made configurable
+        audio_dir = Path(__file__).parent / "tests" / "Assets"
+        # If the default directory doesn't exist, try to find audio files in common locations
+        if not audio_dir.exists():
+            # Look for audio files in the project root and subdirectories
+            project_root = Path(__file__).parent
+            audio_files = []
+            
+            # Common audio file extensions
+            audio_extensions = {'.wav', '.mp3', '.flac', '.aiff'}
+            
+            # Search recursively for audio files
+            for ext in audio_extensions:
+                audio_files.extend(project_root.rglob(f"*{ext}"))
+            
+            # Return found files
+            files = []
+            for file_path in audio_files:
+                # Convert to relative path from project root
+                rel_path = file_path.relative_to(project_root)
+                files.append({
+                    "name": file_path.name,
+                    "path": str(rel_path),
+                    "size": file_path.stat().st_size if file_path.exists() else 0
+                })
+            
+            return web.json_response({"files": files})
+        
+        # If default directory exists, list files from there
+        audio_files = []
+        for file_path in audio_dir.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in {'.wav', '.mp3', '.flac', '.aiff'} :
+                audio_files.append({
+                    "name": file_path.name,
+                    "path": str(file_path.relative_to(Path(__file__).parent)),
+                    "size": file_path.stat().st_size
+                })
+        
+        return web.json_response({"files": audio_files})
+        
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
 
 # Static file handler
 async def static_handler(request):
@@ -627,13 +694,28 @@ loader = ModuleLoader("modules")
 def on_event(event):
     broadcast_ws_event(event)
 
+# Define a silent log callback for all modules
+
+def broadcast_log_message(message: str, module: str = "TestModule", category: str = "system"):
+    log_event = {
+        "type": "console_log",
+        "message": message,
+        "module": module,
+        "timestamp": time.strftime("%H:%M:%S"),
+        "category": category
+    }
+    broadcast_ws_event(log_event)
+
+# Test log broadcast will be started in on_startup after the event loop is running
+
 for interaction in config_data.get("interactions", []):
     input_mod = interaction["input"]["module"]
     input_cfg = interaction["input"]["config"]
     # Start input module with event callback
     mod_instance = create_and_start_module(loader, input_mod, input_cfg, event_callback=on_event)
-    mod_instance.module_id = input_mod  # Set module_id for API
-    module_instances.append(mod_instance)
+    if mod_instance is not None:
+        mod_instance.module_id = input_mod  # Set module_id for API
+        module_instances.append(mod_instance)
 
 # App setup
 app = web.Application()
@@ -652,6 +734,73 @@ app.router.add_post('/config', config_save)
 app.router.add_post('/config/delete_interaction', config_delete_interaction) # Add the new endpoint
 app.router.add_get('/ws/events', ws_events)
 app.router.add_get('/modules/{module}/manifest.json', module_manifest)
+app.router.add_get('/modules/audio_output/waveform/{filename}', waveform_handler)
+app.router.add_get('/modules/audio_output/browse', browse_audio_files) # Add the new endpoint
+
+ALLOWED_AUDIO_EXTENSIONS = {'.wav', '.mp3', '.flac', '.aiff', '.ogg'}
+AUDIO_FILES_DIR = Path(__file__).parent / 'modules' / 'audio_output' / 'assets' / 'audio'
+
+# Ensure the audio directory exists
+AUDIO_FILES_DIR.mkdir(parents=True, exist_ok=True)
+
+async def api_browse_files(request):
+    """List files in a specified directory, filtered by allowed audio extensions."""
+    dir_param = request.query.get('dir', str(AUDIO_FILES_DIR))
+    dir_path = Path(dir_param)
+    # Restrict to AUDIO_FILES_DIR or subdirs
+    try:
+        dir_path = dir_path.resolve()
+        if not str(dir_path).startswith(str(AUDIO_FILES_DIR.resolve())):
+            return web.json_response({'error': 'Access denied'}, status=403)
+        if not dir_path.exists() or not dir_path.is_dir():
+            return web.json_response({'files': []})
+        files = []
+        for file_path in dir_path.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in ALLOWED_AUDIO_EXTENSIONS:
+                files.append({
+                    'name': file_path.name,
+                    'path': str(file_path.relative_to(AUDIO_FILES_DIR)),
+                    'size': file_path.stat().st_size
+                })
+        return web.json_response({'files': files})
+    except Exception as e:
+        return web.json_response({'error': str(e)}, status=500)
+
+async def api_upload_file(request):
+    """Upload a file to a specified directory, only for allowed audio extensions."""
+    reader = await request.multipart()
+    field = await reader.next()
+    if field is None or field.name != 'file':
+        return web.json_response({'error': 'No file part'}, status=400)
+    filename = field.filename
+    ext = Path(filename).suffix.lower()
+    if ext not in ALLOWED_AUDIO_EXTENSIONS:
+        return web.json_response({'error': 'Unsupported file type'}, status=400)
+    # Optional: directory param
+    dir_param = request.query.get('dir', str(AUDIO_FILES_DIR))
+    dir_path = Path(dir_param)
+    try:
+        dir_path = dir_path.resolve()
+        if not str(dir_path).startswith(str(AUDIO_FILES_DIR.resolve())):
+            return web.json_response({'error': 'Access denied'}, status=403)
+        dir_path.mkdir(parents=True, exist_ok=True)
+        dest_path = dir_path / filename
+        with open(dest_path, 'wb') as f:
+            while True:
+                chunk = await field.read_chunk()
+                if not chunk:
+                    break
+                f.write(chunk)
+        return web.json_response({'success': True, 'file': {
+            'name': filename,
+            'path': str(dest_path.relative_to(AUDIO_FILES_DIR)),
+            'size': dest_path.stat().st_size
+        }})
+    except Exception as e:
+        return web.json_response({'error': str(e)}, status=500)
+
+app.router.add_get('/api/browse_files', api_browse_files)
+app.router.add_post('/api/upload_file', api_upload_file)
 app.router.add_get('/module_notes/{module_id}', get_module_notes)
 app.router.add_post('/module_notes/{module_id}', save_module_notes)
 app.router.add_get('/', static_handler)
@@ -751,16 +900,16 @@ def check_singleton():
                         # os.kill(pid, 0) sends signal 0 (no signal) to check if process exists
                         # This will raise an OSError if the process doesn't exist
                         os.kill(pid, 0)
-                        print(f"❌ Another instance of Interaction App is already running (PID: {pid})")
-                        print("Please close the existing instance before starting a new one.")
+                        # print(f"❌ Another instance of Interaction App is already running (PID: {pid})")
+                        # print("Please close the existing instance before starting a new one.")
                         return False
                     except OSError:
                         # Process doesn't exist, remove stale lock file
-                        print("🔄 Removing stale lock file from previous instance")
+                        # print("🔄 Removing stale lock file from previous instance")
                         remove_lock_file(lock_file)
         except Exception:
             # Lock file is corrupted, remove it
-            print("🔄 Removing corrupted lock file")
+            # print("🔄 Removing corrupted lock file")
             remove_lock_file(lock_file)
     
     return True
@@ -779,7 +928,8 @@ def main():
         sys.exit(1)
     lock_file = create_lock_file()
     if not lock_file:
-        print("❌ Failed to create lock file. Another instance might be running.")
+        # print("❌ Failed to create lock file. Another instance might be running.")
+        broadcast_log_message("Failed to create lock file. Another instance might be running.", "System", "error")
         input("Press Enter to exit...")
         sys.exit(1)
     vite_proc = None
@@ -820,7 +970,8 @@ def main():
                 webbrowser.open(f"http://localhost:{vite_port}/")
                 print(f"✅ Web interface opened in browser!\n🔗 Manual URL: http://localhost:{vite_port}/")
             except Exception as e:
-                print(f"⚠️  Could not open browser automatically: {e}")
+                # print(f"⚠️  Could not open browser automatically: {e}")
+                broadcast_log_message(f"Could not open browser automatically: {e}", "System", "warning")
                 print(f"🔗 Please manually open: http://localhost:{vite_port}/")
             print("🛑 Press Ctrl+C to stop the servers")
             # Start aiohttp server (blocking call)
@@ -834,16 +985,17 @@ def main():
     except KeyboardInterrupt:
         print("\n🛑 Application interrupted by user")
     except Exception as e:
-        print(f"💥 Application error: {e}")
+        # print(f"💥 Application error: {e}")
+        broadcast_log_message(f"Application error: {e}", "System", "error")
     finally:
         remove_lock_file(lock_file)
         shutdown_performance_manager()
         if backend_proc:
             backend_proc.terminate()
-            print("🛑 Backend server stopped.")
+            # print("🛑 Backend server stopped.")
         if vite_proc:
             vite_proc.terminate()
-            print("🛑 Vite dev server stopped.")
+            # print("🛑 Vite dev server stopped.")
         print("👋 Interaction App closed")
 
 if __name__ == "__main__":

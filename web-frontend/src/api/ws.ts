@@ -21,9 +21,11 @@ export function connectWebSocket() {
       try {
         const data = JSON.parse(event.data);
         console.log('Received event:', data);
+        console.log('Number of message handlers:', messageHandlers.length);
         // Call all registered message handlers
-        messageHandlers.forEach(handler => {
+        messageHandlers.forEach((handler, index) => {
           try {
+            console.log(`Calling handler ${index}:`, handler);
             handler(data);
           } catch (e) {
             console.error('Error in message handler:', e);

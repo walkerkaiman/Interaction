@@ -25,6 +25,7 @@ from typing import Dict, Any, Callable, Optional
 from message_router import EventRouter
 from abc import ABC, abstractmethod
 import uuid
+import time
 
 class ModuleStrategy(ABC):
     @abstractmethod
@@ -178,7 +179,24 @@ class ModuleBase:
             self._event_callbacks.remove(callback)
 
     def log_message(self, message: str):
-        self.log_callback(message)
+        # Suppress 'Emitting event:' messages from terminal, but always broadcast to frontend
+        if not message.startswith("Emitting event:"):
+            if '❌' in message or '🛑' in message:
+                print(message)
+            elif not (message.startswith("Emitting event:")):
+                print(message)
+        # Broadcast console logs to frontend via WebSocket
+        try:
+            from main import broadcast_ws_event
+            broadcast_ws_event({
+              "type": "console_log",
+                "message": message,
+                "module": self.manifest.get('name', 'Unknown Module'),
+               "timestamp": time.time()
+            })
+        except ImportError:
+            # If main module is not available, just continue
+            pass
         self.event_router._log_debug('log', {'module': self, 'msg': message})
 
     def update_config(self, new_config: Dict[str, Any]):

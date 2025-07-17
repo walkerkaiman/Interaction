@@ -1,14 +1,16 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
-  Box, Typography, Paper, Button, Select, MenuItem, TextField, IconButton, CircularProgress, Alert
+  Box, Typography, Paper, Button, Select, MenuItem, TextField, IconButton, CircularProgress, Alert,
+  Slider, InputAdornment, FormControl, InputLabel
 } from '@mui/material';
 import { Grid } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import SaveIcon from '@mui/icons-material/Save';
-import { fetchConfig, updateConfig, fetchModules, deleteInteraction, fetchModuleInstances } from '../api/api';
+import { fetchConfig, updateConfig, fetchModules, deleteInteraction, fetchModuleInstances, browseAudioFiles } from '../api/api';
 import axios from 'axios';
 import { connectWebSocket, addMessageHandler, removeMessageHandler } from '../api/ws';
+import FileSelector from '../components/FileSelector';
 
 interface ModuleManifestField {
   name: string;
@@ -16,6 +18,8 @@ interface ModuleManifestField {
   default?: any;
   label?: string;
   description?: string;
+  min?: number;
+  max?: number;
 }
 
 interface ModuleManifest {
@@ -62,6 +66,8 @@ const InteractionEditor: React.FC = () => {
   const [clockTimes, setClockTimes] = useState<Record<number, { current_time: string; countdown: string }>>({});
   // Track instance_id to interaction index mapping
   const [instanceIdMapping, setInstanceIdMapping] = useState<Record<string, number>>({});
+  // Add state for available audio files
+  const [audioFiles, setAudioFiles] = useState<Array<{name: string, path: string, size: number}>>();
   const wsRef = useRef<WebSocket | null>(null);
 
   // Load modules and interactions
@@ -70,12 +76,14 @@ const InteractionEditor: React.FC = () => {
       setLoading(true);
       setError(null);
       try {
-        const [modulesArr, config] = await Promise.all([
+        const [modulesArr, config, audioFilesData] = await Promise.all([
           fetchModules(),
-          fetchConfig()
+          fetchConfig(),
+          browseAudioFiles()
         ]);
         setModules(modulesArr);
         setInteractions(config.interactions || []);
+        setAudioFiles(audioFilesData.files || []);
         // Preload manifests for all modules
         const allModuleIds = Array.from(new Set([
           ...modulesArr.map(m => m.id),
@@ -243,6 +251,31 @@ const InteractionEditor: React.FC = () => {
   const removeInteraction = async (idx: number) => {
     setDeleting(idx);
     setError(null);
+    // Determine if this interaction exists in the backend (i.e., was loaded from backend)
+    // We'll assume interactions loaded from backend are those present at initial load
+    // and new ones are appended to the end
+    const isUnsaved = idx >= (await fetchConfig()).interactions.length;
+    if (isUnsaved) {
+      // Just remove from local state, no backend call
+      setInteractions(prev => prev.filter((_, i) => i !== idx));
+      setClockTimes(prev => {
+        const newTimes = { ...prev };
+        delete newTimes[idx];
+        // Shift down all indices after the deleted one
+        const shiftedTimes: Record<number, { current_time: string; countdown: string }> = {};
+        Object.keys(newTimes).forEach(key => {
+          const oldIdx = parseInt(key);
+          if (oldIdx > idx) {
+            shiftedTimes[oldIdx - 1] = newTimes[oldIdx];
+          } else {
+            shiftedTimes[oldIdx] = newTimes[oldIdx];
+          }
+        });
+        return shiftedTimes;
+      });
+      setDeleting(null);
+      return;
+    }
     try {
       await deleteInteraction(idx);
       // Remove from local state
@@ -293,18 +326,122 @@ const InteractionEditor: React.FC = () => {
   // Render config fields for a module
   const renderFields = (fields: ModuleManifestField[] = [], config: Record<string, any>, idx: number, io: 'input' | 'output') => (
     <Grid container spacing={2} columns={12}>
-      {(fields || []).filter(field => field.type !== 'label').map(field => (
-        <Grid key={field.name} sx={{ gridColumn: 'span 4' }}>
-          <TextField
-            label={field.label || field.name}
-            value={config[field.name] ?? field.default ?? ''}
-            onChange={e => updateInteraction(idx, io, field.name, e.target.value)}
-            fullWidth
-            size="small"
-            helperText={field.description}
-          />
-        </Grid>
-      ))}
+      {(fields || []).filter(field => field.type !== 'label').map(field => {
+        // Handle different field types
+        if (field.type === 'slider') {
+          return (
+            <Grid key={field.name} sx={{ gridColumn: 'span 4' }}>
+              <Typography variant="body2" color="text.secondary" gutterBottom>
+                {field.label || field.name}
+              </Typography>
+              <Box sx={{ px: 2 }}>
+                <Slider
+                  value={config[field.name] ?? field.default ?? 0}
+                  onChange={(_, value) => updateInteraction(idx, io, field.name, value)}
+                  min={field.min || 0}
+                  max={field.max || 100}
+                  valueLabelDisplay="auto"
+                  size="small"
+                />
+              </Box>
+              <Typography variant="caption" color="text.secondary" align="center" display="block">
+                {config[field.name] ?? field.default ?? 0}
+              </Typography>
+            </Grid>
+          );
+        }
+        
+        if (field.type === 'waveform') {
+          // Get the file path to determine waveform image path
+          const filePath = config.file_path || '';    const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || '';    const waveformPath = fileName ? `/modules/audio_output/waveform/${fileName}.waveform.png` : null;
+          
+          return (
+            <Grid key={`${field.name}-${filePath}`} sx={{ gridColumn: 'span 4' }}>
+              <Typography variant="body2" color="text.secondary" gutterBottom>
+                {field.label || field.name}
+              </Typography>
+              <Box sx={{ 
+                width: '100%', 
+                height: 100, 
+                border:1, 
+                borderRadius: 1,
+                display: 'flex',        alignItems: 'center',    justifyContent: 'center',   backgroundColor: '#f5f5f5'
+              }}>
+                {waveformPath ? (
+                  <img 
+                    src={waveformPath} 
+                    alt="Waveform" 
+                    style={{ 
+                      maxWidth: '100%', 
+                      maxHeight: '100%', 
+                      objectFit: 'contain' 
+                    }}
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                      const nextElement = e.currentTarget.nextElementSibling as HTMLElement;
+                      if (nextElement) {
+                        nextElement.style.display = 'block';
+                      }
+                    }}
+                    onLoad={(e) => {
+                      // Hide error message when image loads successfully
+                      const errorElement = e.currentTarget.nextElementSibling as HTMLElement;
+                      if (errorElement) {
+                        errorElement.style.display = 'none';
+                      }
+                    }}
+                  />
+                ) : null}
+                <Typography 
+                  variant="caption" 
+                  color="text.secondary"
+                  style={{ display: waveformPath ? 'none' : 'block' }}
+                >
+                  {fileName ? 'No waveform available' : 'Select audio file first'}                </Typography>
+              </Box>
+            </Grid>
+          );
+        }
+        
+        if (field.type === 'filepath') {
+          return (
+            <Grid key={field.name} sx={{ gridColumn: 'span 4' }}>
+              <FileSelector
+                value={config[field.name] ?? ''}
+                onChange={(value) => updateInteraction(idx, io, field.name, value)}
+                label={field.label || field.name}
+                directory="modules/audio_output/assets/audio"
+                onFileUploaded={async (fileInfo) => {
+                  // When a file is uploaded:
+                  // 1. Set the uploaded file as selected (already done by onChange)
+                  // 2. Trigger waveform generation (backend should handle this)
+                  // 3. Save interactions.json
+                  // 4. Restart the module instance
+                  try {
+                    await saveInteractions();
+                    // The backend should automatically generate waveform and restart modules
+                  } catch (error) {
+                    console.error('Failed to save after file upload:', error);
+                  }
+                }}
+              />
+            </Grid>
+          );
+        }
+        
+        // Default text field
+        return (
+          <Grid key={field.name} sx={{ gridColumn: 'span 4' }}>
+            <TextField
+              label={field.label || field.name}
+              value={config[field.name] ?? field.default ?? ''}          onChange={e => updateInteraction(idx, io, field.name, e.target.value)}
+              fullWidth
+              size="small"
+              helperText={field.description}
+            />
+          </Grid>
+        );
+      })}
     </Grid>
   );
 
@@ -314,7 +451,19 @@ const InteractionEditor: React.FC = () => {
   return (
     <Box p={4}>
       <Typography variant="h4" gutterBottom>Interaction Editor</Typography>
-      <Button variant="contained" startIcon={<AddIcon />} onClick={addInteraction} sx={{ mb: 2 }}>Add Interaction</Button>
+      <Box display="flex" alignItems="center" mb={2}>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={addInteraction} sx={{ mr: 2 }}>Add Interaction</Button>
+        <Button
+          variant="contained"
+          color="primary"
+          onClick={saveInteractions}
+          disabled={saving}
+          startIcon={<SaveIcon />}
+        >
+          Save / Apply
+        </Button>
+        {saveSuccess && <Typography color="success.main" sx={{ ml: 2, display: 'inline' }}>Saved!</Typography>}
+      </Box>
       {interactions.length === 0 && <Alert severity="info">No interactions defined.</Alert>}
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       {interactions.map((interaction, idx) => (
@@ -391,18 +540,6 @@ const InteractionEditor: React.FC = () => {
           </Grid>
         </Paper>
       ))}
-      <Box mt={2}>
-        <Button
-          variant="contained"
-          color="primary"
-          onClick={saveInteractions}
-          disabled={saving}
-          sx={{ mt: 2 }}
-        >
-          Save / Apply
-        </Button>
-        {saveSuccess && <Typography color="success.main" sx={{ ml: 2, display: 'inline' }}>Saved!</Typography>}
-      </Box>
     </Box>
   );
 };

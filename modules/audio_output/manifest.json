@@ -7,7 +7,7 @@
   "fields": [
     {
       "name": "file_path",
-      "type": "text",
+      "type": "filepath",
       "label": "Audio File",
       "default": ""
     },

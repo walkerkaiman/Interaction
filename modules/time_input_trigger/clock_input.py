@@ -6,8 +6,19 @@ from module_loader import get_thread_pool
 import uuid
 
 class ClockInputModule(ModuleBase):
-    def __init__(self, config, manifest, log_callback=print, strategy=None):
-        super().__init__(config, manifest, log_callback, strategy=strategy)
+    def __init__(self, config, manifest, log_callback=None, strategy=None):
+        # Use a silent log_callback unless one is provided
+        def silent_log_callback(msg):
+            # Completely suppress "Emitting event" messages from terminal
+            if msg.startswith("Emitting event:"):
+                return  # Don't print anything to terminal
+            
+            # Only print errors and critical messages to terminal
+            # But allow all messages to be sent to frontend console via log_message
+            if '❌' in msg or '🛑' in msg:
+                print(msg)
+            # Note: log_message will still broadcast to frontend console
+        super().__init__(config, manifest, log_callback=log_callback or silent_log_callback, strategy=strategy)
         self.instance_id = str(uuid.uuid4())  # Unique ID for debugging
         
         # Time configuration

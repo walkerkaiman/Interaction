@@ -603,7 +603,7 @@ class ModuleLoader:
                     'python_file': python_file,
                     'manifest': None  # Will be loaded when needed
                 }
-                print(f"📦 Discovered module: {module_name}")
+                # print(f"📦 Discovered module: {module_name}")  # Commented out to reduce terminal noise
             else:
                 print(f"⚠️ Invalid module directory: {item} (missing manifest.json or Python file)")
     

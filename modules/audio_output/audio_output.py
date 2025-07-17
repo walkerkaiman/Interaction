@@ -601,11 +601,14 @@ class AudioOutputModule(ModuleBase):
         self.volume = config.get("volume", 100)
         # master_volume removed
         
+        # Resolve relative file path to full path
+        if self.file_path:
+            self.file_path = self._resolve_file_path(self.file_path)
+        
         # Audio playback state
         self.current_channel = None
         self.playback_start_time = None
-        self.audio_duration = 0
-        
+        self.audio_duration = 0        
         # Waveform data
         self.waveform_data = None
         self.waveform_image_path = None
@@ -618,9 +621,38 @@ class AudioOutputModule(ModuleBase):
         if self.file_path and os.path.exists(self.file_path):
             self.generate_waveform()
         
-        self.log_message(f"Audio Output initialized - File: {os.path.basename(self.file_path) if self.file_path else 'None'}, Volume: {self.volume}%")
+        broadcast_log_message(f"Audio Output initialized - File: {os.path.basename(self.file_path) if self.file_path else None}, Volume: {self.volume}%", module=self.__class__.__name__, category='audio')
         self._cursor_callback = None  # Store the GUI cursor callback
-    
+
+    def _resolve_file_path(self, file_path: str) -> str:
+        """
+        Resolve a relative file path to a full path.
+        
+        Args:
+            file_path (str): Relative or absolute file path
+            
+        Returns:
+            str: Full resolved file path
+        """
+        # If it's already an absolute path, return as is
+        if os.path.isabs(file_path):
+            return file_path
+        
+        # Try to resolve relative to the audio assets directory
+        audio_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "audio")
+        full_path = os.path.join(audio_dir, file_path)
+        
+        # If the file exists in the audio directory, use that path
+        if os.path.exists(full_path):
+            return full_path
+        
+        # Fallback: try relative to current working directory
+        if os.path.exists(file_path):
+            return os.path.abspath(file_path)
+        
+        # If still not found, return the original path (will be handled by error checking)
+        return file_path
+
     def start(self):
         """
         Start the audio output module.
@@ -633,7 +665,7 @@ class AudioOutputModule(ModuleBase):
         not when the module starts.
         """
         super().start()
-        self.log_message(f"🎵 Audio output ready - {os.path.basename(self.file_path) if self.file_path else 'No file'}")
+        broadcast_log_message(f"🎵 Audio output ready - {os.path.basename(self.file_path) if self.file_path else 'No file'}", module=self.__class__.__name__, category='audio')
         # Subscribe to module_event events with a filter for matching input settings
         def event_filter(event, settings):
             # Match on settings if needed (e.g., input port/address, etc.)
@@ -656,7 +688,7 @@ class AudioOutputModule(ModuleBase):
         # Clean up any additional resources here (threads, files, etc.)
         # (If you add threads or open files in the future, stop/close them here.)
         super().stop()
-        self.log_message(f"🛑 Audio output stopped (instance {self.instance_id})")
+        broadcast_log_message(f"🛑 Audio output stopped (instance {self.instance_id})", module=self.__class__.__name__, category='audio')
 
     def wait_for_stop(self):
         """
@@ -675,16 +707,16 @@ class AudioOutputModule(ModuleBase):
         else:
             data = event['data'] if isinstance(event, dict) and 'data' in event else event
             if getattr(self, 'log_level', 'info') == 'verbose':
-                self.log_message(f"🎵 Current file_path: {self.file_path}")
-                self.log_message(f"🎵 Current volume: {self.volume}")
+                broadcast_log_message(f"🎵 Current file_path: {self.file_path}", module=self.__class__.__name__, category='audio')
+                broadcast_log_message(f"🎵 Current volume: {self.volume}", module=self.__class__.__name__, category='audio')
             if not self.file_path or not os.path.exists(self.file_path):
-                self.log_message("❌ No audio file configured or file not found")
+                broadcast_log_message("❌ No audio file configured or file not found", module=self.__class__.__name__, category='audio')
                 return
             try:
                 import pygame
                 sound = pygame.mixer.Sound(self.file_path)
                 final_volume = self.volume / 100.0
-                self.log_message(f"🎵 Setting volume: {final_volume} (individual: {self.volume})")
+                broadcast_log_message(f"🎵 Setting volume: {final_volume} (individual: {self.volume})", module=self.__class__.__name__, category='audio')
                 sound.set_volume(final_volume)
                 channel = pygame.mixer.find_channel()
                 if channel:
@@ -693,11 +725,11 @@ class AudioOutputModule(ModuleBase):
                     self.playback_start_time = time.time()
                     self.audio_duration = sound.get_length()
                     filename = os.path.basename(self.file_path)
-                    self.log_message(f"Audio Clip: {filename} played")
+                    broadcast_log_message(f"Audio Clip: {filename} played", module=self.__class__.__name__, category='audio')
                     if self._cursor_callback:
                         self._cursor_callback(self.audio_duration)
             except Exception as e:
-                self.log_message(f"❌ Error playing audio: {e}")
+                broadcast_log_message(f"❌ Error playing audio: {e}", module=self.__class__.__name__, category='audio')
     
     def update_config(self, new_config: Dict[str, Any]):
         """
@@ -722,9 +754,13 @@ class AudioOutputModule(ModuleBase):
         self.file_path = new_config.get("file_path", "")
         self.volume = new_config.get("volume", 100)
         
+        # Resolve relative file path to full path
+        if self.file_path:
+            self.file_path = self._resolve_file_path(self.file_path)
+        
         # Handle file path changes
         if old_file_path != self.file_path:
-            self.log_message(f"🔄 Audio file changed to: {os.path.basename(self.file_path) if self.file_path else 'None'}")
+            broadcast_log_message(f"🔄 Audio file changed to: {os.path.basename(self.file_path) if self.file_path else 'None'}", module=self.__class__.__name__, category='audio')
             
             # Generate new waveform if file exists
             if self.file_path and os.path.exists(self.file_path):
@@ -735,7 +771,7 @@ class AudioOutputModule(ModuleBase):
         
         # Handle volume changes
         if old_volume != self.volume:
-            self.log_message(f"🔊 Volume changed to: {self.volume}%")
+            broadcast_log_message(f"🔊 Volume changed to: {self.volume}%", module=self.__class__.__name__, category='audio')
     
     # set_master_volume removed
     
@@ -840,14 +876,14 @@ class AudioOutputModule(ModuleBase):
             
             # Generate waveform if it doesn't exist
             if not os.path.exists(self.waveform_image_path):
-                AudioOutputModule.generate_waveform_static(self.file_path, self.waveform_image_path, log_callback=self.log_message)
+                AudioOutputModule.generate_waveform_static(self.file_path, self.waveform_image_path, log_callback=broadcast_log_message)
                 
-                self.log_message(f"📊 Generated waveform for {filename}")
+                broadcast_log_message(f"📊 Generated waveform for {filename}", module=self.__class__.__name__, category='audio')
             else:
-                self.log_message(f"📊 Using cached waveform for {filename}")
+                broadcast_log_message(f"📊 Using cached waveform for {filename}", module=self.__class__.__name__, category='audio')
                 
         except Exception as e:
-            self.log_message(f"❌ Error generating waveform: {e}")
+            broadcast_log_message(f"❌ Error generating waveform: {e}", module=self.__class__.__name__, category='audio')
     
     def _generate_waveform_matplotlib(self):
         """
@@ -893,7 +929,7 @@ class AudioOutputModule(ModuleBase):
             # Fallback to pygame if pydub is not available
             self._generate_waveform_pygame()
         except Exception as e:
-            self.log_message(f"❌ Matplotlib waveform generation failed: {e}")
+            broadcast_log_message(f"❌ Matplotlib waveform generation failed: {e}", module=self.__class__.__name__, category='audio')
             self._generate_waveform_pygame()
     
     def _generate_waveform_pygame(self):
@@ -934,17 +970,17 @@ class AudioOutputModule(ModuleBase):
                 # Optimized waveform generation
                 processor = get_audio_processor()
                 surface = processor.generate_pygame_waveform_optimized(samples, width, height, framerate, cache_key=self.file_path)
-                self.log_message(f"📊 Generated waveform (pygame) for {os.path.basename(self.file_path)}")
+                broadcast_log_message(f"📊 Generated waveform (pygame) for {os.path.basename(self.file_path)}", module=self.__class__.__name__, category='audio')
             except Exception as e:
                 # Draw a red X if file is not a valid WAV
                 pygame.draw.line(surface, (255, 0, 0), (0, 0), (width, height), 3)
                 pygame.draw.line(surface, (255, 0, 0), (0, height), (width, 0), 3)
-                self.log_message(f"❌ Pygame waveform generation failed: {e}")
+                broadcast_log_message(f"❌ Pygame waveform generation failed: {e}", module=self.__class__.__name__, category='audio')
             # Save the surface
             if self.waveform_image_path:
                 pygame.image.save(surface, self.waveform_image_path)
         except Exception as e:
-            self.log_message(f"❌ Pygame waveform generation outer error: {e}")
+            broadcast_log_message(f"❌ Pygame waveform generation outer error: {e}", module=self.__class__.__name__, category='audio')
     
     def get_waveform_path(self) -> Optional[str]:
         """
@@ -1059,9 +1095,9 @@ class AudioOutputModule(ModuleBase):
             if wavs:
                 self.file_path = os.path.join(module_dir, wavs[0])
                 self.config['file_path'] = self.file_path
-                self.log_message(f"[Auto-configure] Selected file: {self.file_path}")
+                broadcast_log_message(f"[Auto-configure] Selected file: {self.file_path}", module=self.__class__.__name__, category='audio')
         if not getattr(self, 'volume', None):
             self.volume = 100
             self.config['volume'] = 100
-            self.log_message("[Auto-configure] Set default volume: 100")
+            broadcast_log_message("[Auto-configure] Set default volume: 100", module=self.__class__.__name__, category='audio')
 

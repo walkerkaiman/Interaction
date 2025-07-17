@@ -7,13 +7,14 @@ import InteractionEditor from './pages/InteractionEditor';
 import Performance from './pages/Performance';
 import connectWebSocket from './api/ws';
 import ModuleWikiPage from './pages/ModuleWikiPage';
+import Console from './pages/Console';
 
 const drawerWidth = 220;
 
 const navItems = [
   { text: 'Wiki', path: '/modules' },
   { text: 'Interactions', path: '/editor' },
-  { text: 'Console', path: '/events' },
+  { text: 'Console', path: '/console' },
   { text: 'Performance', path: '/performance' },
 ];
 
@@ -60,7 +61,7 @@ const App: React.FC = () => {
             <Route path="/modules" element={<Wiki />} />
             <Route path="/modules/:id" element={<ModuleWikiPage />} />
             <Route path="/editor" element={<InteractionEditor />} />
-            <Route path="/events" element={<Events />} />
+            <Route path="/console" element={<Console />} />
             <Route path="/performance" element={<Performance />} />
             <Route path="*" element={<Wiki />} />
           </Routes>

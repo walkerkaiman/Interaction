@@ -1,24 +1,25 @@
 # Interaction - Interactive Art Installation Framework
 
-A modular Python framework for creating interactive art installations using microservices that communicate over OSC (Open Sound Control). This system allows you to build complex interactive experiences by connecting input modules (sensors, triggers, etc.) to output modules (audio, video, lighting, etc.) through a visual GUI.
+A modular Python framework for creating interactive art installations using microservices that communicate over OSC (Open Sound Control). This system allows you to build complex interactive experiences by connecting input modules (sensors, triggers, etc.) to output modules (audio, video, lighting, etc.) through both a web-based interface and traditional GUI.
 
 ## 🏗️ Architecture Overview
 
 ### Microservice Design
 The Interaction framework uses a microservice architecture where each component is a self-contained module:
 
-- **Input Modules**: Handle external triggers (OSC messages, sensors, buttons, etc.)
+- **Input Modules**: Handle external triggers (OSC messages, sensors, buttons, time-based triggers, etc.)
 - **Output Modules**: Generate responses (audio playback, video, lighting, etc.)
 - **Message Router**: Routes events between input and output modules with optimized performance
 - **Module Loader**: Dynamically discovers and loads modules with integrated caching
-- **GUI**: Visual interface for configuring and managing installations
+- **Web Interface**: Modern React-based interface for configuration and monitoring
+- **Backend API**: FastAPI-based backend with WebSocket support for real-time updates
 
 ### Core Components
 
 ```
 Interaction/
 ├── main.py                 # Application entry point with performance management
-├── gui.py                  # Main GUI interface for configuration
+├── gui.py                  # Legacy GUI interface (optional)
 ├── message_router.py       # Optimized event routing system
 ├── module_loader.py        # Module discovery with thread pool and config cache
 ├── modules/                # Module definitions
@@ -26,39 +27,79 @@ Interaction/
 │   ├── audio_output/       # Audio playback with optimized processing
 │   ├── osc_output/         # Unified OSC output (trigger/streaming adaptive)
 │   ├── dmx_output/         # Unified DMX output (trigger/streaming adaptive)
-│   └── osc_input_trigger/  # OSC message receiver
+│   ├── osc_input_trigger/  # OSC message receiver
+│   ├── time_input_trigger/ # Time-based triggers (clock, countdown)
+│   ├── serial_input_trigger/ # Serial port triggers
+│   ├── serial_input_streaming/ # Serial port streaming data
+│   ├── frames_input_trigger/ # sACN frame triggers
+│   └── frames_input_streaming/ # sACN frame streaming
 ├── config/                 # Configuration files
 │   ├── config.json         # App-level settings
 │   └── interactions/       # Installation configurations
-├── web-frontend/           # Web-based interface
+├── web-frontend/           # React-based web interface
+│   ├── src/
+│   │   ├── pages/          # Main application pages
+│   │   ├── components/     # Reusable UI components
+│   │   ├── api/            # API client and WebSocket handling
+│   │   └── state/          # State management
+│   └── public/             # Static assets and module wikis
 └── tests/                  # Test assets and scripts
 ```
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Python 3.8+
+- Python 38- Node.js 16 (for web frontend development)
 - Required packages (see `requirements.txt`):
-  - `tkinter` (usually included with Python)
-  - `pythonosc` (OSC communication)
+  - `aiohttp` (web backend)
+  - `aiohttp-cors` (CORS support)
+  - `python-osc` (OSC communication)
   - `pygame` (audio playback)
   - `pydub` (audio processing)
   - `matplotlib` (waveform generation)
   - `Pillow` (image processing)
-  - `fastapi` (web backend)
-  - `uvicorn` (web server)
+  - `pyserial` (serial communication)
+  - `sacn` (sACN protocol)
+  - `psutil` (system monitoring)
 
 ### Installation
-1. Clone the repository
-2. Install dependencies: `pip install -r requirements.txt`
-3. Run the application:
-   - **GUI Mode**: `python main.py --gui`
-   - **Web Mode**: `python main.py --web` (default)
-   - **Startup Script**: `python start_web_gui.py`
 
-## 📋 How to Build an Installation
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd Interaction
+   ```
+
+2. **Install Python dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3**Install frontend dependencies** (for development)
+   ```bash
+   cd web-frontend
+   npm install
+   cd ..
+   ```
+
+4. **Run the application**
+   ```bash
+   # Web interface (recommended)
+   python main.py
+   
+   # Legacy GUI interface
+   python main.py --gui
+   ```
+
+The web interface will automatically open in your browser at `http://localhost:800## 📋 How to Build an Installation
 
 ### 1. Understanding the Module System
+
+#### Module Classifications
+Modules are classified by type and behavior:
+- **Type**: `input` or `output`
+- **Classification**: `trigger` (event-based) or `streaming` (continuous data)
+- **Mode**: Determines how the module behaves
 
 #### Module Structure
 Each module consists of:
@@ -79,357 +120,177 @@ All modules inherit from `ModuleBase` which provides:
 - Logging with multiple levels
 - Lifecycle management (start/stop)
 - Strategy pattern support for different behaviors
+- Unique instance IDs for tracking
 
-### 2. Creating Input Modules
+### 2able Input Modules
 
-Input modules receive external triggers and emit events. Example:
+#### Clock Input (`time_input_trigger`)
+- **Purpose**: Time-based triggers and countdown timers
+- **Features**: 
+  - Target time triggers (HH:MM:SS format)
+  - Real-time current time display
+  - Countdown timer display
+  - Automatic time synchronization
+- **Configuration**:
+  - `target_time`: Time to trigger at (default:12:00:00)
+#### OSC Input (`osc_input_trigger`)
+- **Purpose**: Receive OSC messages from external devices
+- **Features**:
+  - Multiple OSC address patterns
+  - Shared server management
+  - Automatic port conflict resolution
+- **Configuration**:
+  - `port`: UDP port to listen on (default: 800  - `address`: OSC address pattern to match
 
-```python
-from modules.module_base import ModuleBase, TriggerStrategy
+#### Serial Input (`serial_input_trigger`)
+- **Purpose**: Receive triggers from serial devices
+- **Features**:
+  - Configurable baud rate
+  - Custom trigger conditions
+  - Automatic reconnection
+- **Configuration**:
+  - `port`: Serial port (e.g.,COM3",/dev/ttyUSB0)
+  - `baud_rate`: Communication speed
+  - `trigger_condition`: When to trigger
 
-class MyInputModule(ModuleBase):
-    def __init__(self, config, manifest, log_callback=print, strategy=None):
-        super().__init__(config, manifest, log_callback, strategy=strategy)
-        self.trigger_value = config.get("trigger_value", 0.5)
-    
-    def start(self):
-        """Initialize the input source"""
-        # Set up your input (sensor, network, etc.)
-        pass
-    
-    def stop(self):
-        """Clean up resources"""
-        # Clean up your input
-        pass
-    
-    def _on_trigger(self, value):
-        """Handle input trigger"""
-        if value > self.trigger_value:
-            self.emit_event({"trigger": value})
-```
+#### Serial Streaming (`serial_input_streaming`)
+- **Purpose**: Continuous data from serial devices
+- **Features**:
+  - Real-time data streaming
+  - Configurable data format
+  - Automatic parsing
 
-#### Input Module Manifest
-```json
-{
-    "name": "My Input",
-    "type": "input",
-    "classification": "trigger",
-    "description": "Custom input module",
-    "fields": [
-        {
-            "name": "trigger_value",
-            "type": "number",
-            "default": 0.5,
-            "label": "Trigger Threshold",
-            "description": "Trigger threshold value"
-        }
-    ]
-}
-```
+#### sACN Frame Input (`frames_input_trigger`)
+- **Purpose**: Receive sACN (Streaming ACN) frame triggers
+- **Features**:
+  - DMX universe support
+  - Frame-based triggering
+  - Network configuration
 
-### 3. Creating Output Modules
+#### sACN Frame Streaming (`frames_input_streaming`)
+- **Purpose**: Continuous sACN frame data
+- **Features**:
+  - Real-time DMX data streaming
+  - Multiple universe support
 
-Output modules receive events and generate responses. Example:
+### 3. Available Output Modules
 
-```python
-from modules.module_base import ModuleBase, TriggerStrategy
+#### Audio Output (`audio_output`)
+- **Purpose**: WAV file playback with visualization
+- **Features**:
+  - WAV file playback with volume control
+  - Waveform visualization with caching
+  - Concurrent playback support
+  - Optimized audio processing
+  - Master volume control
+- **Configuration**:
+  - `file_path`: Path to WAV file
+  - `volume`: Individual volume (0-100  - `master_volume`: Global volume control
 
-class MyOutputModule(ModuleBase):
-    def __init__(self, config, manifest, log_callback=print, strategy=None):
-        super().__init__(config, manifest, log_callback, strategy=strategy)
-        self.response_type = config.get("response_type", "default")
-    
-    def start(self):
-        """Initialize the output system"""
-        # Set up your output (audio, video, etc.)
-        pass
-    
-    def stop(self):
-        """Clean up resources"""
-        # Clean up your output
-        pass
-    
-    def handle_event(self, data):
-        """Handle incoming events"""
-        trigger_value = data.get("trigger", 0)
-        self.log_message(f"Responding to trigger: {trigger_value}")
-        # Generate your response
-```
+#### OSC Output (`osc_output`)
+- **Purpose**: Send OSC messages to external devices
+- **Features**:
+  - Adaptive trigger/streaming modes
+  - Multiple OSC addresses
+  - Auto-detection of input classification
+- **Configuration**:
+  - `ip_address`: Target IP address
+  - `port`: Target UDP port
+  - `address`: OSC address pattern
 
-#### Output Module Manifest
-```json
-{
-    "name": "My Output",
-    "type": "output",
-    "classification": "trigger",
-    "description": "Custom output module",
-    "fields": [
-        {
-            "name": "response_type",
-            "type": "text",
-            "default": "default",
-            "label": "Response Type",
-            "description": "Type of response to generate"
-        }
-    ]
-}
-```
+#### DMX Output (`dmx_output`)
+- **Purpose**: Control lighting and DMX devices
+- **Features**:
+  - Multiple protocol support (Serial, Art-Net, sACN)
+  - Chase mode for trigger inputs
+  - Frame sequencing
+  - CSV file support
+- **Configuration**:
+  - `protocol`: Serial, Art-Net, or sACN
+  - `port`: Serial port or network port
+  - `csv_file`: Frame data file path
 
-### 4. Configuring an Installation
+###4ng an Installation
 
-#### Using the GUI
+#### Using the Web Interface (Recommended)
+1. **Launch the application**: `python main.py`2 **Open browser**: Interface opens automatically at `http://localhost:8000`
+3. **Add interactions**: ClickAdd Interaction" button
+4. **Configure inputs**: Select input module and configure parameters
+5. **Configure outputs**: Select output module and configure parameters
+6. **Real-time monitoring**: View module status and performance metrics
+7. **Save configuration**: Changes are automatically saved
+8. **Module wiki**: Access detailed module documentation
+
+#### Using the Legacy GUI
 1. **Launch the application**: `python main.py --gui`
-2. **Add interactions**: Click "+ Add Interaction"
-3. **Configure inputs**: Select input module and configure parameters
-4. **Configure outputs**: Select output module and configure parameters
-5. **Connect modules**: The system automatically connects input to output
-6. **Test**: Use the test buttons or external triggers
-7. **Save**: Configuration is automatically saved
-
-#### Using the Web Interface
-1. **Launch the application**: `python main.py --web`
-2. **Open browser**: Interface opens automatically
-3. **Configure modules**: Use the web-based interface
-4. **Real-time monitoring**: View module status and performance
-5. **Wiki documentation**: Access module documentation
+2. **Add interactions**: Use the GUI interface
+3. **Configure modules**: Set parameters for inputs and outputs
+4. **Test functionality**: Use test buttons or external triggers
+5. **Save configuration**: Configuration is automatically saved
 
 #### Configuration Files
 - **App Config** (`config/config.json`): Global settings
   - Installation name
   - Master volume
   - Log level
-  - Theme
+  - Theme preferences
 
 - **Installation Config** (`config/interactions/interactions.json`): Module configurations
   - Input module settings
   - Output module settings
   - Connections between modules
 
-### 5. OSC Communication
+### 5. Real-Time Features
 
-#### OSC Input Module
-The OSC input module listens for OSC messages and converts them to events:
+#### WebSocket Communication
+- **Real-time updates**: Module status, performance metrics, and events
+- **Live clock display**: Current time and countdown updates
+- **Performance monitoring**: CPU, memory, and event statistics
+- **Module instance tracking**: Unique IDs for proper event routing
 
-```python
-# OSC message format
-/trigger 0.75    # Triggers with value 0.75
-/play "test"     # Triggers with string "test"
-```
-
-#### OSC Output Module (Unified)
-The unified OSC output module adapts to connected input types:
-- **Trigger Mode**: Sends single OSC messages on events
-- **Streaming Mode**: Sends continuous OSC data streams
-- **Auto-detection**: Automatically switches based on input classification
-
-#### OSC Configuration
-- **Port**: UDP port to listen on (default: 8000)
-- **Address**: OSC address pattern to match (e.g., `/trigger`, `/play`)
-- **IP Address**: Target IP for output (default: localhost)
-
-#### Testing OSC
-Use the included test scripts or external OSC clients:
-```bash
-# Send test OSC messages
-python tests/Scripts/osc_test.py
-```
-
-### 6. Audio Output Module
-
-The audio output module provides:
-- **File playback**: Play WAV files with optimized processing
-- **Volume control**: Individual and master volume
-- **Waveform visualization**: Visual representation of audio with caching
-- **Concurrent playback**: Multiple audio files simultaneously
-- **Performance optimization**: Vectorized audio processing
-
-#### Audio Configuration
-- **File path**: Path to WAV file
-- **Volume**: Individual volume (0-100%)
-- **Master volume**: Global volume control in GUI
-
-### 7. DMX Output Module (Unified)
-
-The unified DMX output module supports multiple protocols:
-- **Serial DMX**: Direct serial communication
-- **Art-Net**: Network-based DMX over UDP
-- **sACN**: Streaming ACN protocol
-- **Chase Mode**: Automatic frame sequencing for trigger inputs
-
-#### DMX Configuration
-- **Protocol**: Serial, Art-Net, or sACN
-- **Serial Port**: COM port for serial DMX
-- **IP Address**: Target IP for network protocols
-- **FPS**: Frames per second for chase mode
-- **CSV File**: Frame data file path
-
-## 📁 File Structure Deep Dive
-
-### Core Application Files
-
-#### `main.py`
-- **Purpose**: Application entry point with performance management
-- **Key Features**:
-  - Prevents multiple instances from running
-  - Creates lock file for process management
-  - Handles graceful shutdown
-  - Initializes performance optimizations
-  - Loads GUI or web interface
-
-#### `gui.py`
-- **Purpose**: Main graphical interface
-- **Key Components**:
-  - `InteractionGUI`: Main application window
-  - `InteractionBlock`: Individual input/output configuration
-  - `Logger`: Logging system with multiple verbosity levels
-  - `EditableLabel`: Inline editable text fields
-
-#### `message_router.py`
-- **Purpose**: Optimized event routing system
-- **Key Features**:
-  - Priority-based event routing
-  - Batched event processing
-  - Lock-free data structures
-  - Performance monitoring
-  - Weak reference management
-
-#### `module_loader.py`
-- **Purpose**: Module discovery with integrated performance features
-- **Key Features**:
-  - Automatic module discovery
-  - Manifest validation
-  - Module instantiation
-  - Thread pool management
-  - Configuration caching
-  - Factory pattern implementation
-
-### Module System
-
-#### `modules/module_base.py`
-- **Purpose**: Base class for all modules with strategy patterns
-- **Key Features**:
-  - Configuration management with caching
-  - Event emission with optimized routing
-  - Logging interface
-  - Lifecycle hooks
-  - Strategy pattern support
-  - State management
-
-#### `modules/osc_input_trigger/`
-- **Purpose**: OSC message receiver
-- **Key Components**:
-  - `osc_input.py`: Main OSC input module
-  - `osc_server_manager.py`: Shared OSC server management
-  - `manifest.json`: Module definition
-
-#### `modules/audio_output/`
-- **Purpose**: Audio playback system with optimizations
-- **Key Features**:
-  - WAV file playback
-  - Volume control
-  - Optimized waveform generation
-  - Concurrent audio support
-  - Performance monitoring
-
-#### `modules/osc_output/`
-- **Purpose**: Unified OSC output system
-- **Key Features**:
-  - Adaptive trigger/streaming modes
-  - Auto-detection of input classification
-  - Multiple OSC address support
-  - Performance optimization
-
-#### `modules/dmx_output/`
-- **Purpose**: Unified DMX output system
-- **Key Features**:
-  - Multiple protocol support (Serial, Art-Net, sACN)
-  - Chase mode for trigger inputs
-  - Frame sequencing
-  - Performance optimization
-
-### Configuration System
-
-#### `config/config.json`
-- **Purpose**: Application-level settings
-- **Settings**:
-  - Installation name
-  - Master volume
-  - Log level
-  - Theme preferences
-
-#### `config/interactions/interactions.json`
-- **Purpose**: Installation configuration
-- **Structure**:
-  - Array of interaction blocks
-  - Input module configurations
-  - Output module configurations
-  - Connection mappings
-
-### Web Interface
-
-#### `web-frontend/`
-- **Purpose**: Web-based user interface
-- **Key Features**:
-  - Real-time module monitoring
-  - Configuration interface
-  - Wiki documentation system
-  - Performance metrics display
-
-### Test Assets
-
-#### `tests/Assets/`
-- **Purpose**: Test audio files and resources
-- **Contents**:
-  - Sample WAV files for testing
-  - Generated waveform images
-
-#### `tests/Scripts/`
-- **Purpose**: Testing and debugging tools
-- **Scripts**:
-  - `osc_test.py`: OSC message testing
-  - Additional test utilities
+#### Performance Optimization
+- **Thread pool management**: Optimized concurrent operations
+- **Configuration caching**: Intelligent caching with change detection
+- **Event routing**: Priority-based routing with batching
+- **Audio processing**: Vectorized waveform generation and caching
+- **Memory management**: Automatic resource cleanup
 
 ## 🔧 Advanced Configuration
 
 ### Custom Module Development
 
-1. **Create module directory**: `modules/my_module/`
+1e module directory**: `modules/my_module/`
 2. **Implement module class**: Inherit from `ModuleBase`
 3. **Create manifest**: Define configuration schema
-4. **Test module**: Use GUI to test functionality
+4. **Test module**: Use web interface to test functionality
 5. **Deploy**: Module is automatically discovered
 
 ### Network Configuration
 
-#### OSC Ports
-- **Default port**: 8000
-- **Multiple addresses**: Same port, different addresses
+#### OSC Communication
+- **Default port**:8000Multiple addresses**: Same port, different addresses
 - **Port conflicts**: Handled automatically by singleton pattern
+- **Testing**: Use included test scripts or external OSC clients
 
-#### IP Address
-- **Local IP**: Automatically detected and displayed
-- **Network access**: Bind to 0.0.0.0 for network access
-- **Firewall**: Ensure UDP ports are open
+#### Web Interface
+- **Default port**: 8000 **CORS support**: Configured for cross-origin requests
+- **WebSocket**: Real-time communication for live updates
 
-### Performance Optimization
+### Performance Management
 
-#### Integrated Performance Features
-- **Thread Pool**: Optimized thread management for concurrent operations
-- **Configuration Cache**: Intelligent caching with change detection
-- **Message Router**: Priority-based event routing with batching
-- **Audio Processing**: Vectorized waveform generation and caching
-- **Performance Monitoring**: Real-time metrics and auto-adjustment
+#### Performance Levels
+- **Maximum**: All optimizations enabled
+- **Balanced**: Balanced performance and compatibility (default)
+- **Conservative**: Minimal optimizations for stability
+- **Disabled**: All optimizations disabled
 
-#### Audio Performance
-- **Concurrent playback**: Uses pygame mixer channels
-- **Memory management**: Automatic cleanup of audio resources
-- **Waveform caching**: Generated waveforms are cached
-- **Vectorized processing**: Optimized audio operations
-
-#### OSC Performance
-- **Shared servers**: Multiple modules share OSC servers
-- **Efficient routing**: Direct callback execution
-- **Resource cleanup**: Automatic server shutdown
+#### Performance Metrics
+- CPU usage
+- Memory usage
+- Event latency
+- Cache hit rates
+- Thread pool statistics
+- WebSocket connection status
 
 ## 🐛 Troubleshooting
 
@@ -447,13 +308,17 @@ The unified DMX output module supports multiple protocols:
 - **Cause**: Network issues, incorrect address/port
 - **Solution**: Check network connectivity, verify OSC address patterns
 
+#### Web Interface Not Loading
+- **Cause**: Backend not running or port conflicts
+- **Solution**: Check backend status, verify port80is available
+
+#### Clock Display Not Updating
+- **Cause**: WebSocket connection issues or module mapping problems
+- **Solution**: Check browser console, verify module instances are running
+
 #### Module Not Loading
 - **Cause**: Missing dependencies or invalid manifest
 - **Solution**: Check module manifest, ensure all dependencies installed
-
-#### Performance Issues
-- **Cause**: High CPU/memory usage
-- **Solution**: Check performance metrics in web interface, adjust optimization levels
 
 ### Debugging
 
@@ -464,17 +329,33 @@ The unified DMX output module supports multiple protocols:
 - **Outputs**: Event triggers and outputs
 - **Verbose**: Detailed debugging information
 
-#### OSC Debugging
-- Use test scripts to verify OSC communication
-- Check server status in GUI
-- Monitor network traffic
+#### Web Interface Debugging
+- Check browser console for JavaScript errors
+- Verify WebSocket connection status
+- Monitor network requests in browser dev tools
 
 #### Performance Debugging
 - Use web interface to view performance metrics
 - Check thread pool statistics
 - Monitor cache hit rates
+- View real-time system metrics
 
 ## 📚 API Reference
+
+### Backend API Endpoints
+
+#### Configuration
+- `GET /config` - Get current configuration
+- `POST /config` - Save configuration
+- `POST /config/delete_interaction` - Delete specific interaction
+
+#### Module Management
+- `GET /modules` - Get available modules
+- `GET /module_instances` - Get running module instances
+- `GET /modules/{module}/manifest.json` - Get module manifest
+
+#### WebSocket
+- `GET /ws/events` - WebSocket endpoint for real-time events
 
 ### ModuleBase Class
 
@@ -491,59 +372,54 @@ The unified DMX output module supports multiple protocols:
 - `manifest`: Module manifest dictionary
 - `log_callback`: Logging function
 - `strategy`: Module behavior strategy
+- `instance_id`: Unique instance identifier
 
 ### Event System
 
 #### Event Format
 ```python
-{
-    "address": "/trigger",      # OSC address (for OSC events)
-    "args": ["value"],          # Event arguments
-    "trigger": 0.75,           # Custom event data
+[object Object]  instance_id: que-id",  # Module instance identifieraddress":/trigger",       # OSC address (for OSC events)
+    argsvalue"],           # Event arguments
+  trigger: 0.75          # Custom event data
+   current_time": "19,  # Clock events
+   countdown:20:29,# Countdown events
     # ... additional fields
 }
 ```
 
 #### Event Flow
 1. Input module receives trigger
-2. Input module emits event
+2. Input module emits event with instance_id
 3. Optimized message router routes event
 4. Output module receives event
 5. Output module generates response
 
-### Performance Management
-
-#### Performance Levels
-- **Maximum**: All optimizations enabled
-- **Balanced**: Balanced performance and compatibility
-- **Conservative**: Minimal optimizations for stability
-- **Disabled**: All optimizations disabled
-
-#### Performance Metrics
-- CPU usage
-- Memory usage
-- Event latency
-- Cache hit rates
-- Thread pool statistics
-
 ## 🤝 Contributing
 
 ### Development Guidelines
-1. Follow existing code structure
+1llow existing code structure
 2. Add comprehensive logging
 3. Include manifest files for modules
-4. Test thoroughly before submitting
+4 thoroughly before submitting
 5. Update documentation
-6. Use performance optimizations where appropriate
+6 performance optimizations where appropriate
+7. Ensure WebSocket compatibility for real-time features
 
-### Module Development
-1. Inherit from `ModuleBase`
+### Module Development1herit from `ModuleBase`
 2. Implement required methods
-3. Create manifest file
+3eate manifest file
 4. Add error handling
-5. Include cleanup in `stop()` method
+5Include cleanup in `stop()` method
 6. Use strategy patterns for different behaviors
 7. Implement performance monitoring
+8. Add real-time event emission for UI updates
+
+### Frontend Development1se React with TypeScript
+2existing component patterns
+3. Implement proper error handling
+4. Add loading states for async operations
+5. Use WebSocket for real-time updates
+6. Maintain responsive design
 
 ## 📄 License
 
@@ -553,51 +429,13 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - Python OSC library for network communication
 - Pygame for audio playback
-- Tkinter for GUI framework
+- FastAPI for web backend
+- React for web frontend
 - Pydub for audio processing
 - Matplotlib for waveform generation
-- FastAPI for web backend
-- Uvicorn for web server
+- sACN library for DMX over network
+- PySerial for serial communication
 
 ---
 
-For more information, see the individual module documentation and test scripts.
-
-## Developer Guide: Extending the Event-Driven Modular GUI
-
-1. **Architectural Overview**: Event-driven, state-driven, thread-safe design. No polling. All state changes via explicit pathways.
-2. **Adding a New Module**:
-   - **Manifest**: Define fields, types, and protocol-dependent options.
-   - **Module Class**: Inherit from ModuleBase, implement event/callback system, emit events for all state changes.
-   - **GUI Integration**: Use event/callbacks for all dynamic fields. Never use polling. Register any threads with the GUI (self.gui_ref.threads.append(...)).
-   - **Config**: All config/state changes must go through explicit update pathways. Use get_input_config/get_output_config and update_config methods.
-   - **Thread Safety**: All GUI updates from threads must use self.root.after().
-   - **Shutdown**: Implement stop() for all background tasks. Register threads for clean shutdown.
-   - **Performance**: Use integrated thread pool and caching systems.
-3. **Best Practices**:
-   - Centralize state in config and block objects.
-   - Only save/load config on explicit state changes.
-   - Use clear docstrings and comments for AI and human maintainers.
-   - Add TODOs for any future improvements or places where new modules should follow the same patterns.
-   - Implement strategy patterns for different module behaviors.
-4. **AI/Automation Notes**:
-   - All module and GUI logic is discoverable via clear method names and docstrings.
-   - All event/callback registration points are explicit.
-   - Thread and resource management is centralized for easy auditing.
-   - No polling or hidden background tasks: all state changes are explicit and traceable.
-   - Performance optimizations are integrated and configurable.
-5. **Example Checklist for New Modules**:
-   - [ ] Manifest defines all fields and protocol options
-   - [ ] Module emits events for all state changes
-   - [ ] GUI fields update only via event/callbacks
-   - [ ] No polling or untracked threads
-   - [ ] All threads registered for shutdown
-   - [ ] All config/state changes go through explicit update pathways
-   - [ ] stop() implemented for all background tasks
-   - [ ] All GUI updates from threads use self.root.after()
-   - [ ] Docstrings and comments added for AI/human maintainers
-   - [ ] TODOs left for future improvements
-   - [ ] Performance optimizations implemented where appropriate
-   - [ ] Strategy patterns used for different behaviors
-
-Make this section clear, concise, and actionable for both AI and human developers.
+For more information, see the individual module documentation in the web interface wiki section.

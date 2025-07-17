@@ -21,6 +21,11 @@ export const fetchModuleInstances = async () => {
   return response.data;
 };
 
+export const browseAudioFiles = async () => {
+  const response = await api.get('/modules/audio_output/browse');
+  return response.data;
+};
+
 // Example: Get global config
 export const fetchConfig = async () => {
   const response = await api.get('/config');
