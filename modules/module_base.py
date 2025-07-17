@@ -37,9 +37,40 @@ class ModuleStrategy(ABC):
         pass
 
 class TriggerStrategy(ModuleStrategy):
-    def process_event(self, event: Dict) -> None:
-        # Handle trigger-based events (to be implemented in concrete modules)
-        pass
+    """
+    TriggerStrategy - Standardized trigger event handler for output modules.
+
+    This strategy enables any output module (audio, OSC, DMX, etc.) to respond to trigger events in a unified way.
+    When a trigger event is received, the strategy will:
+      - Call the module's `on_trigger(event)` method if it exists.
+      - Print debug information if no handler is implemented.
+
+    To add a new triggerable output module:
+      1. Implement an `on_trigger(self, event)` method in your module class.
+      2. The system will automatically call this method when the module is triggered (e.g., by a manual button press in the GUI).
+      3. No changes to the strategy or core logic are needed—just add the method to your new module.
+
+    This design ensures modularity, extensibility, and ease of maintenance for all triggerable outputs.
+    """
+    def process_event(self, event: Dict, module=None) -> None:
+        """
+        Process a trigger event for the given module.
+
+        Args:
+            event (Dict): The event data (e.g., {'data': 'manual_trigger', ...})
+            module: The output module instance to trigger (must implement on_trigger)
+
+        If the module implements `on_trigger`, it will be called with the event.
+        Otherwise, a debug message is printed.
+        """
+        print(f"[AUDIO DEBUG] TriggerStrategy.process_event called with event: {event}, module: {module}")
+        if module is not None:
+            # Call a module-specific on_trigger method if it exists
+            if hasattr(module, 'on_trigger') and callable(getattr(module, 'on_trigger')):
+                print(f"[AUDIO DEBUG] TriggerStrategy: calling {module.__class__.__name__}.on_trigger")
+                module.on_trigger(event)
+            else:
+                print(f"[AUDIO DEBUG] TriggerStrategy: No trigger handler implemented for {module.__class__.__name__}")
     def configure(self, config: Dict) -> None:
         # Configure trigger-based module (to be implemented in concrete modules)
         pass

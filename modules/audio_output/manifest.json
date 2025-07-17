@@ -24,5 +24,6 @@
       "type": "waveform",
       "label": "Waveform"
     }
-  ]
+  ],
+  "supports_manual_trigger": true
 }

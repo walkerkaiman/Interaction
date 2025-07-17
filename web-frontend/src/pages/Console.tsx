@@ -25,7 +25,6 @@ const Console: React.FC = () => {
   useEffect(() => {
     const handler = (data: any) => {
       if (data.type === 'console_log') {
-        console.log('Console: Received log data:', data); // Debug log
         setLogs(prev => {
           const newLogs = [...prev, {
             message: data.message,
@@ -33,7 +32,6 @@ const Console: React.FC = () => {
             timestamp: data.timestamp || new Date().toLocaleTimeString(),
             category: data.category || 'system'  // Default to system if no category
           }];
-          console.log('Console: Updated logs array:', newLogs); // Debug log
           return newLogs;
         });
       }

@@ -46,3 +46,23 @@ The OSC Output module is a unified, adaptive output system that automatically de
 
 ## Installation Notes
 *Add your installation-specific notes here. This section is editable in the web interface.* 
+
+## Manual Trigger (Play Button) Support
+
+This module supports a manual Play (trigger) button in the frontend. This is enabled by the following flag in its manifest:
+
+```json
+"supports_manual_trigger": true
+```
+
+### How It Works
+- When this flag is present and set to true, the frontend will display a Play button for this output module in the Interaction Editor.
+- The Play button is hidden whenever the module's settings are changed (dirty state) and reappears after the user clicks Save/Apply.
+- The Play button sends a trigger to the backend using the appropriate API endpoint for the module.
+
+### For Developers: Adding Manual Trigger Support
+- To enable this feature for a new output module, add `"supports_manual_trigger": true` to the module's `manifest.json`.
+- Add the module's API endpoint to the `playEndpoints` mapping in the frontend if it is not `play_audio`.
+- The frontend will automatically handle the Play button visibility and logic for all modules with this flag.
+
+--- 

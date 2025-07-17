@@ -1,16 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  Box,
-  Typography,
-  CircularProgress,
-  Alert,
-  Button,
-  Paper
-} from '@mui/material';
+import React, { useEffect, useState, useRef } from 'react';
+import { Box, Select, MenuItem, InputLabel, FormControl, Button, Typography, Paper, CircularProgress } from '@mui/material';
+
+interface FileSelectorProps {
+  directory: string;
+  value?: string;
+  onChange: (file: string) => void;
+}
 
 interface FileInfo {
   name: string;
@@ -18,39 +13,26 @@ interface FileInfo {
   size: number;
 }
 
-interface FileSelectorProps {
-  value: string;
-  onChange: (value: string) => void;
-  label: string;
-  directory?: string;
-  onFileUploaded?: (fileInfo: FileInfo) => void;
-}
-
-const AUDIO_EXTENSIONS = ['.wav', '.mp3', '.flac', '.aiff', '.ogg'];
-
-const FileSelector: React.FC<FileSelectorProps> = ({
-  value,
-  onChange,
-  label,
-  directory = 'tests/Assets',
-  onFileUploaded
-}) => {
+const FileSelector: React.FC<FileSelectorProps> = ({ directory, value, onChange }) => {
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const loadFiles = async () => {
+  const fetchFiles = async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/browse_files?dir=${encodeURIComponent(directory)}`);
-      if (!response.ok) throw new Error('Failed to load files');
+      const response = await fetch(`http://localhost:8000/api/browse_files?dir=${encodeURIComponent(directory)}`);
       const data = await response.json();
-      setFiles(data.files || []);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load files');
+      if (data.files) {
+        setFiles(data.files);
+      } else {
+        setFiles([]);
+      }
+    } catch (e) {
+      setError('Failed to load files');
       setFiles([]);
     } finally {
       setLoading(false);
@@ -58,121 +40,91 @@ const FileSelector: React.FC<FileSelectorProps> = ({
   };
 
   useEffect(() => {
-    loadFiles();
+    fetchFiles();
     // eslint-disable-next-line
   }, [directory]);
 
-  const handleFileUpload = async (file: File) => {
+  const handleFileSelect = (event: any) => {
+    onChange(event.target.value as string);
+  };
+
+  const handleDrop = async (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
+      await uploadFile(event.dataTransfer.files[0]);
+    }
+  };
+
+  const handleFileInput = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files && event.target.files.length > 0) {
+      await uploadFile(event.target.files[0]);
+    }
+  };
+
+  const uploadFile = async (file: File) => {
     setUploading(true);
     setError(null);
     try {
-      const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
-      if (!AUDIO_EXTENSIONS.includes(ext)) {
-        setError('Unsupported file type');
-        setUploading(false);
-        return;
-      }
       const formData = new FormData();
       formData.append('file', file);
-      const response = await fetch(`/api/upload_file?dir=${encodeURIComponent(directory)}`, {
+      const response = await fetch(`http://localhost:8000/api/upload_file?dir=${encodeURIComponent(directory)}`, {
         method: 'POST',
-        body: formData
+        body: formData,
       });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Upload failed');
-      }
       const data = await response.json();
-      const uploadedFile = data.file;
-      await loadFiles();
-      onChange(uploadedFile.path);
-      if (onFileUploaded) onFileUploaded(uploadedFile);
-    } catch (err: any) {
-      setError(err.message || 'Upload failed');
+      if (data.success && data.file) {
+        await fetchFiles();
+        onChange(data.file.path);
+      } else {
+        setError(data.error || 'Upload failed');
+      }
+    } catch (e) {
+      setError('Upload failed');
     } finally {
       setUploading(false);
     }
   };
 
-  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = e.target.files;
-    if (selectedFiles && selectedFiles.length > 0) {
-      handleFileUpload(selectedFiles[0]);
-    }
+  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
   };
-
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFileUpload(e.dataTransfer.files[0]);
-    }
-  };
-
-  if (loading) {
-    return (
-      <Box display="flex" alignItems="center" gap={1}>
-        <CircularProgress size={16} />
-        <Typography variant="caption">Loading files...</Typography>
-      </Box>
-    );
-  }
-
-  if (error) {
-    return (
-      <Alert severity="error" sx={{ my: 1 }}>{error}</Alert>
-    );
-  }
 
   return (
     <Box>
-      <FormControl fullWidth size="small">
-        <InputLabel>{label}</InputLabel>
+      <FormControl fullWidth size="small" sx={{ mb: 1 }}>
+        <InputLabel id="file-selector-label">Select File</InputLabel>
         <Select
-          value={value}
-          label={label}
-          onChange={e => onChange(e.target.value)}
-          renderValue={selected => {
-            if (!selected) return label;
-            const selectedFile = files.find(f => f.path === selected);
-            return selectedFile ? selectedFile.name : selected;
-          }}
+          labelId="file-selector-label"
+          value={value || ''}
+          label="Select File"
+          onChange={handleFileSelect}
+          disabled={loading || uploading}
         >
-          <MenuItem value="">
-            <em>Select audio file...</em>
-          </MenuItem>
-          {files.length === 0 ? (
-            <MenuItem disabled>
-              <em>No files available</em>
-            </MenuItem>
-          ) : (
-            files.map(file => (
-              <MenuItem key={file.path} value={file.path}>
-                {file.name}
-              </MenuItem>
-            ))
-          )}
+          {files.map(file => (
+            <MenuItem key={file.path} value={file.path}>{file.name}</MenuItem>
+          ))}
         </Select>
       </FormControl>
-      <Box mt={1}>
-        <Paper
-          variant="outlined"
-          sx={{ p: 2, textAlign: 'center', cursor: 'pointer', borderStyle: 'dashed' }}
-          onClick={() => fileInputRef.current?.click()}
-          onDrop={handleDrop}
-          onDragOver={e => e.preventDefault()}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={AUDIO_EXTENSIONS.join(',')}
-            style={{ display: 'none' }}
-            onChange={handleFileInput}
-          />
-          <Typography variant="body2" color="text.secondary">
-            {uploading ? 'Uploading...' : 'Drag & drop audio file here or click to browse'}
-          </Typography>
-        </Paper>
-      </Box>
+      <Paper
+        variant="outlined"
+        sx={{ p: 2, textAlign: 'center', background: '#fafafa', borderStyle: 'dashed', mb: 1, cursor: 'pointer' }}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        <Typography variant="body2" color="textSecondary">
+          Drag and drop a file here, or click to select
+        </Typography>
+        <input
+          type="file"
+          style={{ display: 'none' }}
+          ref={fileInputRef}
+          onChange={handleFileInput}
+          disabled={uploading}
+        />
+        {uploading && <CircularProgress size={24} sx={{ mt: 1 }} />}
+      </Paper>
+      {error && <Typography color="error" variant="body2">{error}</Typography>}
     </Box>
   );
 };

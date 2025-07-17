@@ -76,5 +76,6 @@
     "serial_port": {"type": "string", "default": "COM1", "required": false},
     "net": {"type": "string", "default": "0", "required": false},
     "subnet": {"type": "string", "default": "0", "required": false}
-  }
+  },
+  "supports_manual_trigger": true
 } 

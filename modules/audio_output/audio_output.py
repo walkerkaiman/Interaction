@@ -43,6 +43,7 @@ from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 import weakref
 
+
 class OptimizedAudioProcessor:
     """
     High-performance audio processor with vectorized operations.
@@ -555,45 +556,19 @@ except ImportError:
 
 class AudioOutputModule(ModuleBase):
     """
-    Audio output module for playing WAV files with volume control and visualization.
-    
-    This module provides audio playback functionality with the following features:
-    - WAV file playback using pygame mixer
-    - Individual volume control (0-100%)
-    - Master volume control from GUI
-    - Waveform visualization generation
-    - Concurrent playback of multiple audio files
-    - Visual cursor showing playback progress
-    - Automatic waveform caching
-    
-    The module uses pygame's mixer system which provides:
-    - Non-blocking audio playback
-    - Multiple channels for concurrent audio
-    - Volume control per channel
-    - Automatic resource management
-    
-    Configuration:
-    - file_path (str): Path to WAV file to play
-    - volume (int): Individual volume (0-100)
-    
-    Event Handling:
-    The module responds to events by playing the configured audio file
-    with the current volume settings. Multiple events can trigger
-    concurrent playback of the same or different audio files.
+    AudioOutputModule - Audio playback output module with trigger support.
+
+    This module plays a WAV file when triggered, using the standardized trigger system.
+    It implements the `on_trigger(event)` method, which is called by the TriggerStrategy
+    whenever a trigger event is received (e.g., from a manual button press in the GUI).
+
+    To add a new triggerable output module, implement an `on_trigger(self, event)` method
+    in your module class. The system will automatically call this method when triggered.
     """
     
     def __init__(self, config: Dict[str, Any], manifest: Dict[str, Any], log_callback=print, strategy=None):
-        """
-        Initialize the audio output module.
-        
-        Args:
-            config (Dict[str, Any]): Module configuration
-            manifest (Dict[str, Any]): Module manifest
-            log_callback: Function to call for logging
-            
-        Note: The configuration should contain 'file_path' and 'volume' fields.
-        The module will initialize pygame mixer if not already initialized.
-        """
+        from main import broadcast_log_message
+        self._log_message = broadcast_log_message
         super().__init__(config, manifest, log_callback, strategy=strategy)
         
         # Extract configuration values with defaults
@@ -621,7 +596,7 @@ class AudioOutputModule(ModuleBase):
         if self.file_path and os.path.exists(self.file_path):
             self.generate_waveform()
         
-        broadcast_log_message(f"Audio Output initialized - File: {os.path.basename(self.file_path) if self.file_path else None}, Volume: {self.volume}%", module=self.__class__.__name__, category='audio')
+        self._log_message(f"Audio Output initialized - File: {os.path.basename(self.file_path) if self.file_path else None}, Volume: {self.volume}%", module=self.__class__.__name__, category='audio')
         self._cursor_callback = None  # Store the GUI cursor callback
 
     def _resolve_file_path(self, file_path: str) -> str:
@@ -665,7 +640,7 @@ class AudioOutputModule(ModuleBase):
         not when the module starts.
         """
         super().start()
-        broadcast_log_message(f"🎵 Audio output ready - {os.path.basename(self.file_path) if self.file_path else 'No file'}", module=self.__class__.__name__, category='audio')
+        self._log_message(f"🎵 Audio output ready - {os.path.basename(self.file_path) if self.file_path else 'No file'}", module=self.__class__.__name__, category='audio')
         # Subscribe to module_event events with a filter for matching input settings
         def event_filter(event, settings):
             # Match on settings if needed (e.g., input port/address, etc.)
@@ -688,7 +663,7 @@ class AudioOutputModule(ModuleBase):
         # Clean up any additional resources here (threads, files, etc.)
         # (If you add threads or open files in the future, stop/close them here.)
         super().stop()
-        broadcast_log_message(f"🛑 Audio output stopped (instance {self.instance_id})", module=self.__class__.__name__, category='audio')
+        self._log_message(f"🛑 Audio output stopped (instance {self.instance_id})", module=self.__class__.__name__, category='audio')
 
     def wait_for_stop(self):
         """
@@ -697,26 +672,68 @@ class AudioOutputModule(ModuleBase):
         # No background threads currently, but method is here for consistency
         pass
     
+    def on_trigger(self, event=None):
+        """
+        Handle a trigger event by playing the configured audio file once.
+
+        Args:
+            event: The event data (not used for audio, but available for extensibility)
+
+        This method is called automatically by the TriggerStrategy when the module is triggered.
+        """
+        print(f"[AUDIO DEBUG] on_trigger called with event: {event}")
+        if not self.file_path or not os.path.exists(self.file_path):
+            print(f"[AUDIO DEBUG] No audio file configured or file not found: {self.file_path}")
+            return
+        print(f"[AUDIO DEBUG] Volume: {self.volume}")
+        try:
+            import pygame
+            print(f"[AUDIO DEBUG] Attempting to play sound: {self.file_path}")
+            sound = pygame.mixer.Sound(self.file_path)
+            final_volume = self.volume / 100.0
+            print(f"[AUDIO DEBUG] Setting volume: {final_volume} (individual: {self.volume})")
+            sound.set_volume(final_volume)
+            channel = pygame.mixer.find_channel()
+            if channel:
+                channel.play(sound)
+                self.current_channel = channel
+                self.playback_start_time = time.time()
+                self.audio_duration = sound.get_length()
+                filename = os.path.basename(self.file_path)
+                print(f"[AUDIO DEBUG] Audio Clip Played: {filename}")
+                if self._cursor_callback:
+                    self._cursor_callback(self.audio_duration)
+            else:
+                print(f"[AUDIO DEBUG] No available audio channel to play sound")
+        except Exception as e:
+            print(f"[AUDIO DEBUG] Error playing audio: {e}")
+
     def handle_event(self, event, settings=None):
-        """
-        Handle incoming events by playing audio.
-        This method is called when the module receives an event from a connected input module.
-        """
+        print(f"[AUDIO DEBUG] handle_event called with event: {event}")
+        print(f"[AUDIO DEBUG] self.strategy: {self.strategy}")
+        self._log_message(f"handle_event called with event: {event}", module=self.__class__.__name__, category='audio')
+        self._log_message(f"Current file_path: {self.file_path}", module=self.__class__.__name__, category='audio')
+        file_exists = os.path.exists(self.file_path)
+        self._log_message(f"File exists: {file_exists}", module=self.__class__.__name__, category='audio')
+        print(f"[AUDIO DEBUG] file_path: {self.file_path}, exists: {file_exists}")
         if self.strategy:
-            self.strategy.process_event(event)
+            self.strategy.process_event(event, self)
         else:
             data = event['data'] if isinstance(event, dict) and 'data' in event else event
             if getattr(self, 'log_level', 'info') == 'verbose':
-                broadcast_log_message(f"🎵 Current file_path: {self.file_path}", module=self.__class__.__name__, category='audio')
-                broadcast_log_message(f"🎵 Current volume: {self.volume}", module=self.__class__.__name__, category='audio')
+                self._log_message(f"🎵 Current file_path: {self.file_path}", module=self.__class__.__name__, category='audio')
+                self._log_message(f"🎵 Current volume: {self.volume}", module=self.__class__.__name__, category='audio')
             if not self.file_path or not os.path.exists(self.file_path):
-                broadcast_log_message("❌ No audio file configured or file not found", module=self.__class__.__name__, category='audio')
+                self._log_message("❌ No audio file configured or file not found", module=self.__class__.__name__, category='audio')
+                print(f"[AUDIO DEBUG] No audio file configured or file not found: {self.file_path}")
                 return
+            print(f"[AUDIO DEBUG] Volume: {self.volume}")
             try:
                 import pygame
+                print(f"[AUDIO DEBUG] Attempting to play sound: {self.file_path}")
                 sound = pygame.mixer.Sound(self.file_path)
                 final_volume = self.volume / 100.0
-                broadcast_log_message(f"🎵 Setting volume: {final_volume} (individual: {self.volume})", module=self.__class__.__name__, category='audio')
+                self._log_message(f"🎵 Setting volume: {final_volume} (individual: {self.volume})", module=self.__class__.__name__, category='audio')
                 sound.set_volume(final_volume)
                 channel = pygame.mixer.find_channel()
                 if channel:
@@ -725,11 +742,16 @@ class AudioOutputModule(ModuleBase):
                     self.playback_start_time = time.time()
                     self.audio_duration = sound.get_length()
                     filename = os.path.basename(self.file_path)
-                    broadcast_log_message(f"Audio Clip: {filename} played", module=self.__class__.__name__, category='audio')
+                    self._log_message(f"Audio Clip: {filename} played", module=self.__class__.__name__, category='audio')
+                    print(f"[AUDIO DEBUG] Audio Clip Played: {filename}")
                     if self._cursor_callback:
                         self._cursor_callback(self.audio_duration)
+                else:
+                    self._log_message("❌ No available audio channel to play sound", module=self.__class__.__name__, category='audio')
+                    print(f"[AUDIO DEBUG] No available audio channel to play sound")
             except Exception as e:
-                broadcast_log_message(f"❌ Error playing audio: {e}", module=self.__class__.__name__, category='audio')
+                self._log_message(f"❌ Error playing audio: {e}", module=self.__class__.__name__, category='audio')
+                print(f"[AUDIO DEBUG] Error playing audio: {e}")
     
     def update_config(self, new_config: Dict[str, Any]):
         """
@@ -760,7 +782,7 @@ class AudioOutputModule(ModuleBase):
         
         # Handle file path changes
         if old_file_path != self.file_path:
-            broadcast_log_message(f"🔄 Audio file changed to: {os.path.basename(self.file_path) if self.file_path else 'None'}", module=self.__class__.__name__, category='audio')
+            self._log_message(f"🔄 Audio file changed to: {os.path.basename(self.file_path) if self.file_path else 'None'}", module=self.__class__.__name__, category='audio')
             
             # Generate new waveform if file exists
             if self.file_path and os.path.exists(self.file_path):
@@ -771,7 +793,7 @@ class AudioOutputModule(ModuleBase):
         
         # Handle volume changes
         if old_volume != self.volume:
-            broadcast_log_message(f"🔊 Volume changed to: {self.volume}%", module=self.__class__.__name__, category='audio')
+            self._log_message(f"🔊 Volume changed to: {self.volume}%", module=self.__class__.__name__, category='audio')
     
     # set_master_volume removed
     
@@ -876,14 +898,14 @@ class AudioOutputModule(ModuleBase):
             
             # Generate waveform if it doesn't exist
             if not os.path.exists(self.waveform_image_path):
-                AudioOutputModule.generate_waveform_static(self.file_path, self.waveform_image_path, log_callback=broadcast_log_message)
+                AudioOutputModule.generate_waveform_static(self.file_path, self.waveform_image_path, log_callback=self._log_message)
                 
-                broadcast_log_message(f"📊 Generated waveform for {filename}", module=self.__class__.__name__, category='audio')
+                self._log_message(f"📊 Generated waveform for {filename}", module=self.__class__.__name__, category='audio')
             else:
-                broadcast_log_message(f"📊 Using cached waveform for {filename}", module=self.__class__.__name__, category='audio')
+                self._log_message(f"📊 Using cached waveform for {filename}", module=self.__class__.__name__, category='audio')
                 
         except Exception as e:
-            broadcast_log_message(f"❌ Error generating waveform: {e}", module=self.__class__.__name__, category='audio')
+            self._log_message(f"❌ Error generating waveform: {e}", module=self.__class__.__name__, category='audio')
     
     def _generate_waveform_matplotlib(self):
         """
@@ -929,7 +951,7 @@ class AudioOutputModule(ModuleBase):
             # Fallback to pygame if pydub is not available
             self._generate_waveform_pygame()
         except Exception as e:
-            broadcast_log_message(f"❌ Matplotlib waveform generation failed: {e}", module=self.__class__.__name__, category='audio')
+            self._log_message(f"❌ Matplotlib waveform generation failed: {e}", module=self.__class__.__name__, category='audio')
             self._generate_waveform_pygame()
     
     def _generate_waveform_pygame(self):
@@ -970,17 +992,17 @@ class AudioOutputModule(ModuleBase):
                 # Optimized waveform generation
                 processor = get_audio_processor()
                 surface = processor.generate_pygame_waveform_optimized(samples, width, height, framerate, cache_key=self.file_path)
-                broadcast_log_message(f"📊 Generated waveform (pygame) for {os.path.basename(self.file_path)}", module=self.__class__.__name__, category='audio')
+                self._log_message(f"📊 Generated waveform (pygame) for {os.path.basename(self.file_path)}", module=self.__class__.__name__, category='audio')
             except Exception as e:
                 # Draw a red X if file is not a valid WAV
                 pygame.draw.line(surface, (255, 0, 0), (0, 0), (width, height), 3)
                 pygame.draw.line(surface, (255, 0, 0), (0, height), (width, 0), 3)
-                broadcast_log_message(f"❌ Pygame waveform generation failed: {e}", module=self.__class__.__name__, category='audio')
+                self._log_message(f"❌ Pygame waveform generation failed: {e}", module=self.__class__.__name__, category='audio')
             # Save the surface
             if self.waveform_image_path:
                 pygame.image.save(surface, self.waveform_image_path)
         except Exception as e:
-            broadcast_log_message(f"❌ Pygame waveform generation outer error: {e}", module=self.__class__.__name__, category='audio')
+            self._log_message(f"❌ Pygame waveform generation outer error: {e}", module=self.__class__.__name__, category='audio')
     
     def get_waveform_path(self) -> Optional[str]:
         """
@@ -1095,9 +1117,9 @@ class AudioOutputModule(ModuleBase):
             if wavs:
                 self.file_path = os.path.join(module_dir, wavs[0])
                 self.config['file_path'] = self.file_path
-                broadcast_log_message(f"[Auto-configure] Selected file: {self.file_path}", module=self.__class__.__name__, category='audio')
+                self._log_message(f"[Auto-configure] Selected file: {self.file_path}", module=self.__class__.__name__, category='audio')
         if not getattr(self, 'volume', None):
             self.volume = 100
             self.config['volume'] = 100
-            broadcast_log_message("[Auto-configure] Set default volume: 100", module=self.__class__.__name__, category='audio')
+            self._log_message("[Auto-configure] Set default volume: 100", module=self.__class__.__name__, category='audio')
 

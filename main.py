@@ -403,6 +403,12 @@ async def on_startup(app):
 
 # Helper: Broadcast to all WebSocket clients
 def broadcast_ws_event(event: dict):
+    # Suppress time update events from being sent to the frontend
+    if (
+        isinstance(event, dict) and
+        set(['current_time', 'countdown', 'target_time', 'instance_id']).issubset(event.keys())
+    ):
+        return
     # print("Broadcasting event to clients:", event)  # Debug print
     msg = json.dumps(event)
     for ws in set(ws_clients):
@@ -495,13 +501,23 @@ async def config_save(request):
 
     # Start new module instances with new config
     for interaction in new_interactions:
+        # Start input module
         input_mod = interaction["input"]["module"]
         input_cfg = interaction["input"]["config"]
-        broadcast_log_message(f"Starting module {input_mod} with config: {input_cfg}", "System", "system")
-        mod_instance = create_and_start_module(loader, input_mod, input_cfg, event_callback=on_event)
-        if mod_instance is not None:
-            mod_instance.module_id = input_mod  # Set module_id for API
-            module_instances.append(mod_instance)
+        broadcast_log_message(f"Starting input module {input_mod} with config: {input_cfg}", "System", "system")
+        input_instance = create_and_start_module(loader, input_mod, input_cfg, event_callback=on_event)
+        if input_instance is not None:
+            input_instance.module_id = input_mod  # Set module_id for API
+            module_instances.append(input_instance)
+        
+        # Start output module
+        output_mod = interaction["output"]["module"]
+        output_cfg = interaction["output"]["config"]
+        broadcast_log_message(f"Starting output module {output_mod} with config: {output_cfg}", "System", "system")
+        output_instance = create_and_start_module(loader, output_mod, output_cfg, event_callback=on_event)
+        if output_instance is not None:
+            output_instance.module_id = output_mod  # Set module_id for API
+            module_instances.append(output_instance)
     broadcast_log_message("All new modules started", "System", "system")
 
     broadcast_ws_event({"type": "config_update", "config": latest_config})
@@ -561,13 +577,21 @@ async def config_delete_interaction(request):
 
     # Start new module instances with updated config
     for interaction in interactions:
+        # Start input module
         input_mod = interaction["input"]["module"]
         input_cfg = interaction["input"]["config"]
-        # print(f"[DEBUG] Starting module {input_mod} with config: {input_cfg}")
-        mod_instance = create_and_start_module(loader, input_mod, input_cfg, event_callback=on_event)
-        if mod_instance is not None:
-            mod_instance.module_id = input_mod  # Set module_id for API
-            module_instances.append(mod_instance)
+        input_instance = create_and_start_module(loader, input_mod, input_cfg, event_callback=on_event)
+        if input_instance is not None:
+            input_instance.module_id = input_mod  # Set module_id for API
+            module_instances.append(input_instance)
+        
+        # Start output module
+        output_mod = interaction["output"]["module"]
+        output_cfg = interaction["output"]["config"]
+        output_instance = create_and_start_module(loader, output_mod, output_cfg, event_callback=on_event)
+        if output_instance is not None:
+            output_instance.module_id = output_mod  # Set module_id for API
+            module_instances.append(output_instance)
     # print("[DEBUG] All new modules started")
 
     broadcast_ws_event({"type": "config_update", "config": config_data})
@@ -600,6 +624,13 @@ async def waveform_handler(request):
     if not waveform_path.exists():
         return web.Response(status=404, text='Waveform not found')
     return web.FileResponse(waveform_path)
+
+async def waveform_image_handler(request):
+    filename = request.match_info['filename']
+    image_path = Path(__file__).parent / "modules/audio_output/assets/images" / filename
+    if not image_path.exists():
+        return web.Response(status=404, text='Waveform image not found')
+    return web.FileResponse(image_path)
 
 async def browse_audio_files(request):
     """List available audio files on the server"""
@@ -697,6 +728,9 @@ def on_event(event):
 # Define a silent log callback for all modules
 
 def broadcast_log_message(message: str, module: str = "TestModule", category: str = "system"):
+    # Only broadcast messages for the audio output module
+    if module != "audio_output":
+        return
     log_event = {
         "type": "console_log",
         "message": message,
@@ -735,6 +769,7 @@ app.router.add_post('/config/delete_interaction', config_delete_interaction) # A
 app.router.add_get('/ws/events', ws_events)
 app.router.add_get('/modules/{module}/manifest.json', module_manifest)
 app.router.add_get('/modules/audio_output/waveform/{filename}', waveform_handler)
+app.router.add_get('/modules/audio_output/assets/images/{filename}', waveform_image_handler) # Add the new endpoint
 app.router.add_get('/modules/audio_output/browse', browse_audio_files) # Add the new endpoint
 
 ALLOWED_AUDIO_EXTENSIONS = {'.wav', '.mp3', '.flac', '.aiff', '.ogg'}
@@ -798,6 +833,65 @@ async def api_upload_file(request):
         }})
     except Exception as e:
         return web.json_response({'error': str(e)}, status=500)
+
+async def api_play_audio(request):
+    print("[AUDIO DEBUG] /api/play_audio endpoint called")
+    # Debug: Log that the endpoint was called
+    print("[AUDIO DEBUG] Awaiting request.json()...")
+    data = await request.json()
+    print(f"[AUDIO DEBUG] Request data: {data}")
+    interaction_index = data.get('interaction_index')
+    print(f"[AUDIO DEBUG] interaction_index: {interaction_index}")
+    config_path = Path("config/interactions/interactions.json")
+    print(f"[AUDIO DEBUG] Loading config from {config_path}")
+    if not config_path.exists():
+        print("[AUDIO DEBUG] Config file not found")
+        return web.json_response({'error': 'Configuration not found'}, status=404)
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+    interactions = config.get('interactions', [])
+    print(f"[AUDIO DEBUG] Loaded {len(interactions)} interactions")
+    if not (0 <= interaction_index < len(interactions)):
+        print("[AUDIO DEBUG] Invalid interaction index")
+        return web.json_response({'error': 'Invalid interaction index'}, status=400)
+    interaction = interactions[interaction_index]
+    print(f"[AUDIO DEBUG] Interaction: {interaction}")
+    output_module = interaction.get('output', {}).get('module')
+    print(f"[AUDIO DEBUG] Output module: {output_module}")
+    if output_module != 'audio_output':
+        print("[AUDIO DEBUG] Output module is not audio_output")
+        return web.json_response({'error': 'Interaction output is not an audio module'}, status=400)
+    target_config = interaction['output'].get('config', {})
+    expected_file_path = target_config.get('file_path')
+    print(f"[AUDIO DEBUG] Expected file path: {expected_file_path}")
+    print(f"[AUDIO DEBUG] Searching for audio_output instance...")
+    audio_instance = None
+    for instance in module_instances:
+        instance_module_id = getattr(instance, 'module_id', None)
+        instance_file_path = getattr(instance, 'config', {}).get('file_path')
+        print(f"[AUDIO DEBUG] Checking instance: module_id={instance_module_id}, file_path={instance_file_path}")
+        if (
+            instance_module_id == 'audio_output' and
+            instance_file_path == expected_file_path
+        ):
+            audio_instance = instance
+            print("[AUDIO DEBUG] Found matching audio_output instance")
+            break
+    if not audio_instance:
+        print("[AUDIO DEBUG] No audio_output instance found")
+        return web.json_response({'error': 'Audio output instance not found'}, status=404)
+    print("[AUDIO DEBUG] Calling handle_event on audio_output instance...")
+    mock_event = {
+        'data': 'manual_trigger',
+        'source': 'manual_play_button',
+        'timestamp': time.time()
+    }
+    audio_instance.handle_event(mock_event)
+    print("[AUDIO DEBUG] handle_event called successfully")
+    return web.json_response({'success': True, 'message': 'playback triggered'})
+
+# Register the new endpoint
+app.router.add_post('/api/play_audio', api_play_audio)
 
 app.router.add_get('/api/browse_files', api_browse_files)
 app.router.add_post('/api/upload_file', api_upload_file)
@@ -974,6 +1068,31 @@ def main():
                 broadcast_log_message(f"Could not open browser automatically: {e}", "System", "warning")
                 print(f"🔗 Please manually open: http://localhost:{vite_port}/")
             print("🛑 Press Ctrl+C to stop the servers")
+            # Load config and instantiate modules at startup
+            config_path = Path("config/interactions/interactions.json")
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                interactions = config.get('interactions', [])
+                global loader
+                loader = ModuleLoader("modules")
+                global module_instances
+                module_instances = []
+                for interaction in interactions:
+                    # Start input module
+                    input_mod = interaction["input"]["module"]
+                    input_cfg = interaction["input"]["config"]
+                    input_instance = create_and_start_module(loader, input_mod, input_cfg, event_callback=on_event)
+                    if input_instance is not None:
+                        input_instance.module_id = input_mod
+                        module_instances.append(input_instance)
+                    # Start output module
+                    output_mod = interaction["output"]["module"]
+                    output_cfg = interaction["output"]["config"]
+                    output_instance = create_and_start_module(loader, output_mod, output_cfg, event_callback=on_event)
+                    if output_instance is not None:
+                        output_instance.module_id = output_mod
+                        module_instances.append(output_instance)
             # Start aiohttp server (blocking call)
             web.run_app(app, port=8000)
             # Keep the main thread running

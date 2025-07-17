@@ -40,5 +40,6 @@
       "default": "/data",
       "required": true
     }
-  }
+  },
+  "supports_manual_trigger": true
 } 
