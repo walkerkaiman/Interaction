@@ -736,29 +736,27 @@ class ModuleLoader:
             if spec is None or spec.loader is None:
                 print(f"❌ Could not load module spec for '{module_name}'")
                 return None
-            
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
-            
-            # Find the module class (should inherit from ModuleBase)
+            # Prefer class by convention for known modules
             module_class = None
-            for attr_name in dir(module):
-                attr = getattr(module, attr_name)
-                if (isinstance(attr, type) and 
-                    issubclass(attr, ModuleBase) and 
-                    attr != ModuleBase):
-                    module_class = attr
-                    break
-            
+            if module_name == "time_input_trigger" and hasattr(module, "TimeInputModule"):
+                module_class = getattr(module, "TimeInputModule")
+            else:
+                for attr_name in dir(module):
+                    attr = getattr(module, attr_name)
+                    if (isinstance(attr, type) and 
+                        issubclass(attr, ModuleBase) and 
+                        attr != ModuleBase):
+                        module_class = attr
+                        break
             if module_class is None:
                 print(f"❌ Module '{module_name}' does not contain a valid ModuleBase subclass")
                 return None
-            
             # Cache the loaded class
             self.loaded_modules[module_name] = module_class
             print(f"✅ Loaded module class: {module_name}")
             return module_class
-            
         except Exception as e:
             print(f"❌ Error loading module class '{module_name}': {e}")
             return None

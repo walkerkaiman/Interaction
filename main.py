@@ -125,23 +125,18 @@ class PerformanceManager:
         try:
             # Initialize thread pool
             self.thread_pool = get_thread_pool()
-            # print(f"✅ Thread pool initialized with {self.thread_pool.max_threads} max threads")
             
             # Initialize configuration cache
             self.config_cache = get_config_cache()
-            # print("✅ Configuration cache initialized")
             
             # Initialize optimized message router
             if self.optimization_level in [PerformanceLevel.MAXIMUM, PerformanceLevel.BALANCED]:
                 self.message_router = get_message_router()
-                # print("✅ Optimized message router initialized")
             
             # Initialize audio processor
             self.audio_processor = get_audio_processor()
-                # print("✅ Optimized audio processor initialized")
             
         except Exception as e:
-            # print(f"❌ Error initializing performance components: {e}")
             self.enabled = False
     
     def _start_monitoring(self):
@@ -155,7 +150,6 @@ class PerformanceManager:
             daemon=True
         )
         self.monitoring_thread.start()
-        # print("✅ Performance monitoring started")
     
     def _monitor_performance(self):
         """Monitor performance metrics continuously"""
@@ -178,7 +172,6 @@ class PerformanceManager:
                 self._auto_adjust_optimization(metrics)
                 
             except Exception as e:
-                # print(f"❌ Error in performance monitoring: {e}")
                 pass
             
             self.stop_monitoring.wait(self.monitoring_interval)
@@ -234,7 +227,6 @@ class PerformanceManager:
                 try:
                     callback(metrics)
                 except Exception as e:
-                    # print(f"❌ Error in performance callback: {e}")
                     pass
     
     def _auto_adjust_optimization(self, metrics: PerformanceMetrics):
@@ -252,8 +244,6 @@ class PerformanceManager:
         """Set the optimization level"""
         if level == self.optimization_level:
             return
-        
-        # print(f"🔄 Changing optimization level from {self.optimization_level.value} to {level.value}")
         
         # Shutdown current components
         self._shutdown_components()
@@ -322,16 +312,12 @@ class PerformanceManager:
         """Force optimization of a specific component"""
         if component == "thread_pool" and not self.thread_pool:
             self.thread_pool = get_thread_pool()
-            # print("✅ Thread pool forced initialization")
         elif component == "config_cache" and not self.config_cache:
             self.config_cache = get_config_cache()
-            # print("✅ Config cache forced initialization")
         elif component == "message_router" and not self.message_router:
             self.message_router = get_message_router()
-            # print("✅ Message router forced initialization")
         elif component == "audio_processor" and not self.audio_processor:
             self.audio_processor = get_audio_processor()
-            # print("✅ Audio processor forced initialization")
     
     def _shutdown_components(self):
         """Shutdown performance components"""
@@ -345,8 +331,6 @@ class PerformanceManager:
     
     def shutdown(self):
         """Shutdown the performance manager"""
-        # print("🛑 Shutting down performance manager...")
-        
         # Stop monitoring
         self.stop_monitoring.set()
         if self.monitoring_thread and self.monitoring_thread.is_alive():
@@ -358,7 +342,6 @@ class PerformanceManager:
         # Clear callbacks
         self.performance_callbacks.clear()
         
-        # print("✅ Performance manager shutdown complete")
 
 # Global performance manager instance
 _global_performance_manager = None
@@ -382,11 +365,7 @@ def shutdown_performance_manager():
         _global_performance_manager.shutdown()
         _global_performance_manager = None
 
-# Optionally import Tkinter GUI
-try:
-    from gui import launch_gui
-except ImportError:
-    launch_gui = None
+
 
 # --- Web API and WebSocket integration ---
 WEB_DIR = Path(__file__).parent / "web-frontend" / "public"
@@ -399,20 +378,11 @@ async def on_startup(app):
     
     # Start the test log broadcast task now that the event loop is running
     # asyncio.create_task(test_log_broadcast())
-    # print("✅ Test log broadcast started")
 
 # Helper: Broadcast to all WebSocket clients
 def broadcast_ws_event(event: dict):
-    # Suppress time update events from being sent to the frontend
-    if (
-        isinstance(event, dict) and
-        set(['current_time', 'countdown', 'target_time', 'instance_id']).issubset(event.keys())
-    ):
-        return
-    # print("Broadcasting event to clients:", event)  # Debug print
     msg = json.dumps(event)
     for ws in set(ws_clients):
-        # print("WS client:", ws)  # Debug print
         if not ws.closed:
             if MAIN_EVENT_LOOP and MAIN_EVENT_LOOP.is_running():
                 asyncio.run_coroutine_threadsafe(ws.send_str(msg), MAIN_EVENT_LOOP)
@@ -474,6 +444,9 @@ async def config_save(request):
     # Save new config first
     with open(config_file, 'w') as f:
         json.dump(data, f, indent=2)
+    # Invalidate config cache to ensure fresh config is used
+    from module_loader import get_config_cache
+    get_config_cache().invalidate(str(config_file))
     broadcast_log_message("Config file saved, about to stop modules", "System", "system")
 
     # Reload config from disk to ensure latest values
@@ -504,16 +477,13 @@ async def config_save(request):
         # Start input module
         input_mod = interaction["input"]["module"]
         input_cfg = interaction["input"]["config"]
-        broadcast_log_message(f"Starting input module {input_mod} with config: {input_cfg}", "System", "system")
         input_instance = create_and_start_module(loader, input_mod, input_cfg, event_callback=on_event)
         if input_instance is not None:
             input_instance.module_id = input_mod  # Set module_id for API
             module_instances.append(input_instance)
-        
         # Start output module
         output_mod = interaction["output"]["module"]
         output_cfg = interaction["output"]["config"]
-        broadcast_log_message(f"Starting output module {output_mod} with config: {output_cfg}", "System", "system")
         output_instance = create_and_start_module(loader, output_mod, output_cfg, event_callback=on_event)
         if output_instance is not None:
             output_instance.module_id = output_mod  # Set module_id for API
@@ -525,7 +495,6 @@ async def config_save(request):
 
 async def config_delete_interaction(request):
     """Delete a specific interaction by index and restart modules"""
-    # print("[DEBUG] config_delete_interaction handler called")
     data = await request.json()
     interaction_index = data.get("index")
     
@@ -549,12 +518,13 @@ async def config_delete_interaction(request):
     
     # Remove the interaction
     removed_interaction = interactions.pop(interaction_index)
-    # print(f"[DEBUG] Removed interaction {interaction_index}: {removed_interaction}")
     
     # Save updated config
     with open(config_file, 'w') as f:
         json.dump(config_data, f, indent=2)
-    # print("[DEBUG] Updated config saved, about to stop modules")
+    # Invalidate config cache to ensure fresh config is used
+    from module_loader import get_config_cache
+    get_config_cache().invalidate(str(config_file))
 
     # Stop all previous module instances
     global module_instances
@@ -562,10 +532,8 @@ async def config_delete_interaction(request):
         try:
             instance.stop()
         except Exception as e:
-            # print(f"[WARN] Failed to stop module: {e}")
             pass
     module_instances = []
-    # print("[DEBUG] modules stopped, about to start new modules")
 
     # Short delay to allow threads to exit
     import time as _time
@@ -592,8 +560,6 @@ async def config_delete_interaction(request):
         if output_instance is not None:
             output_instance.module_id = output_mod  # Set module_id for API
             module_instances.append(output_instance)
-    # print("[DEBUG] All new modules started")
-
     broadcast_ws_event({"type": "config_update", "config": config_data})
     return web.json_response({"status": "deleted", "removed_interaction": removed_interaction})
 
@@ -601,14 +567,12 @@ async def ws_events(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     ws_clients.add(ws)
-    # print("WebSocket client connected. Total clients:", len(ws_clients))  # Debug print
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
                 pass
     finally:
         ws_clients.remove(ws)
-        # print("WebSocket client disconnected. Total clients:", len(ws_clients))  # Debug print
     return ws
 
 async def module_manifest(request):
@@ -728,9 +692,16 @@ def on_event(event):
 # Define a silent log callback for all modules
 
 def broadcast_log_message(message: str, module: str = "TestModule", category: str = "system"):
-    # Only broadcast messages for the audio output module
-    if module != "audio_output":
-        return
+    """
+    Broadcast a log message to all connected frontend clients via WebSocket.
+
+    Args:
+        message (str): The log message to send.
+        module (str): The name of the module or system component generating the log.
+        category (str): The log category (e.g., 'system', 'audio', 'osc', 'serial', 'dmx').
+
+    This function sends a 'console_log' event to all clients, which is displayed in the Console UI.
+    """
     log_event = {
         "type": "console_log",
         "message": message,
@@ -835,63 +806,56 @@ async def api_upload_file(request):
         return web.json_response({'error': str(e)}, status=500)
 
 async def api_play_audio(request):
-    print("[AUDIO DEBUG] /api/play_audio endpoint called")
-    # Debug: Log that the endpoint was called
-    print("[AUDIO DEBUG] Awaiting request.json()...")
     data = await request.json()
-    print(f"[AUDIO DEBUG] Request data: {data}")
     interaction_index = data.get('interaction_index')
-    print(f"[AUDIO DEBUG] interaction_index: {interaction_index}")
     config_path = Path("config/interactions/interactions.json")
-    print(f"[AUDIO DEBUG] Loading config from {config_path}")
     if not config_path.exists():
-        print("[AUDIO DEBUG] Config file not found")
         return web.json_response({'error': 'Configuration not found'}, status=404)
     with open(config_path, 'r') as f:
         config = json.load(f)
     interactions = config.get('interactions', [])
-    print(f"[AUDIO DEBUG] Loaded {len(interactions)} interactions")
     if not (0 <= interaction_index < len(interactions)):
-        print("[AUDIO DEBUG] Invalid interaction index")
         return web.json_response({'error': 'Invalid interaction index'}, status=400)
     interaction = interactions[interaction_index]
-    print(f"[AUDIO DEBUG] Interaction: {interaction}")
     output_module = interaction.get('output', {}).get('module')
-    print(f"[AUDIO DEBUG] Output module: {output_module}")
     if output_module != 'audio_output':
-        print("[AUDIO DEBUG] Output module is not audio_output")
         return web.json_response({'error': 'Interaction output is not an audio module'}, status=400)
     target_config = interaction['output'].get('config', {})
     expected_file_path = target_config.get('file_path')
-    print(f"[AUDIO DEBUG] Expected file path: {expected_file_path}")
-    print(f"[AUDIO DEBUG] Searching for audio_output instance...")
     audio_instance = None
     for instance in module_instances:
         instance_module_id = getattr(instance, 'module_id', None)
         instance_file_path = getattr(instance, 'config', {}).get('file_path')
-        print(f"[AUDIO DEBUG] Checking instance: module_id={instance_module_id}, file_path={instance_file_path}")
         if (
             instance_module_id == 'audio_output' and
             instance_file_path == expected_file_path
         ):
             audio_instance = instance
-            print("[AUDIO DEBUG] Found matching audio_output instance")
             break
     if not audio_instance:
-        print("[AUDIO DEBUG] No audio_output instance found")
         return web.json_response({'error': 'Audio output instance not found'}, status=404)
-    print("[AUDIO DEBUG] Calling handle_event on audio_output instance...")
     mock_event = {
         'data': 'manual_trigger',
         'source': 'manual_play_button',
         'timestamp': time.time()
     }
     audio_instance.handle_event(mock_event)
-    print("[AUDIO DEBUG] handle_event called successfully")
     return web.json_response({'success': True, 'message': 'playback triggered'})
+
+async def api_test_log(request):
+    try:
+        data = await request.json()
+        message = data.get('message', 'Test log')
+        module = data.get('module', 'system')
+        category = data.get('category', 'system')
+        broadcast_log_message(message, module, category)
+        return web.json_response({'status': 'ok'})
+    except Exception as e:
+        return web.json_response({'status': 'error', 'error': str(e)}, status=400)
 
 # Register the new endpoint
 app.router.add_post('/api/play_audio', api_play_audio)
+app.router.add_post('/api/test_log', api_test_log)
 
 app.router.add_get('/api/browse_files', api_browse_files)
 app.router.add_post('/api/upload_file', api_upload_file)
@@ -994,16 +958,12 @@ def check_singleton():
                         # os.kill(pid, 0) sends signal 0 (no signal) to check if process exists
                         # This will raise an OSError if the process doesn't exist
                         os.kill(pid, 0)
-                        # print(f"❌ Another instance of Interaction App is already running (PID: {pid})")
-                        # print("Please close the existing instance before starting a new one.")
                         return False
                     except OSError:
                         # Process doesn't exist, remove stale lock file
-                        # print("🔄 Removing stale lock file from previous instance")
                         remove_lock_file(lock_file)
         except Exception:
             # Lock file is corrupted, remove it
-            # print("🔄 Removing corrupted lock file")
             remove_lock_file(lock_file)
     
     return True
@@ -1022,77 +982,71 @@ def main():
         sys.exit(1)
     lock_file = create_lock_file()
     if not lock_file:
-        # print("❌ Failed to create lock file. Another instance might be running.")
         broadcast_log_message("Failed to create lock file. Another instance might be running.", "System", "error")
         input("Press Enter to exit...")
         sys.exit(1)
     vite_proc = None
     backend_proc = None
     try:
-        if args.gui and launch_gui:
-            print("✅ Starting legacy GUI...")
-            launch_gui()
+        print("✅ Starting web backend...")
+        # Start Vite dev server (npm run dev) in web-frontend if not already running
+        vite_port = 5173
+        def is_port_in_use(port):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                try:
+                    s.bind(('localhost', port))
+                    return False
+                except OSError:
+                    return True
+        if not is_port_in_use(vite_port):
+            print("⏳ Starting Vite dev server (npm run dev) in web-frontend/ ...")
+            vite_proc = subprocess.Popen(
+                ["npm", "run", "dev"],
+                cwd=str(Path(__file__).parent / "web-frontend"),
+                shell=True
+            )
+            # Wait a few seconds for Vite to start
+            time.sleep(5)
+            print(f"✅ Vite dev server started at http://localhost:{vite_port}/")
         else:
-            print("✅ Starting web backend...")
-            # Start Vite dev server (npm run dev) in web-frontend if not already running
-            vite_port = 5173
-            def is_port_in_use(port):
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    try:
-                        s.bind(('localhost', port))
-                        return False
-                    except OSError:
-                        return True
-            if not is_port_in_use(vite_port):
-                print("⏳ Starting Vite dev server (npm run dev) in web-frontend/ ...")
-                vite_proc = subprocess.Popen(
-                    ["npm", "run", "dev"],
-                    cwd=str(Path(__file__).parent / "web-frontend"),
-                    shell=True
-                )
-                # Wait a few seconds for Vite to start
-                time.sleep(5)
-                print(f"✅ Vite dev server started at http://localhost:{vite_port}/")
-            else:
-                print(f"⚠️  Vite dev server already running on port {vite_port}.")
-            # Check if port 8000 is already in use
-            if is_port_in_use(8000):
-                print("⚠️  Port 8000 is already in use. Assuming backend is already running.")
-            # Open the Vite web interface in the default browser
-            print(f"🌐 Opening web interface at http://localhost:{vite_port}/")
-            try:
-                webbrowser.open(f"http://localhost:{vite_port}/")
-                print(f"✅ Web interface opened in browser!\n🔗 Manual URL: http://localhost:{vite_port}/")
-            except Exception as e:
-                # print(f"⚠️  Could not open browser automatically: {e}")
-                broadcast_log_message(f"Could not open browser automatically: {e}", "System", "warning")
-                print(f"🔗 Please manually open: http://localhost:{vite_port}/")
-            print("🛑 Press Ctrl+C to stop the servers")
-            # Load config and instantiate modules at startup
-            config_path = Path("config/interactions/interactions.json")
-            if config_path.exists():
-                with open(config_path, 'r') as f:
-                    config = json.load(f)
-                interactions = config.get('interactions', [])
-                global loader
-                loader = ModuleLoader("modules")
-                global module_instances
-                module_instances = []
-                for interaction in interactions:
-                    # Start input module
-                    input_mod = interaction["input"]["module"]
-                    input_cfg = interaction["input"]["config"]
-                    input_instance = create_and_start_module(loader, input_mod, input_cfg, event_callback=on_event)
-                    if input_instance is not None:
-                        input_instance.module_id = input_mod
-                        module_instances.append(input_instance)
-                    # Start output module
-                    output_mod = interaction["output"]["module"]
-                    output_cfg = interaction["output"]["config"]
-                    output_instance = create_and_start_module(loader, output_mod, output_cfg, event_callback=on_event)
-                    if output_instance is not None:
-                        output_instance.module_id = output_mod
-                        module_instances.append(output_instance)
+            print(f"⚠️  Vite dev server already running on port {vite_port}.")
+        # Check if port 8000 is already in use
+        if is_port_in_use(8000):
+            print("⚠️  Port 8000 is already in use. Assuming backend is already running.")
+        # Open the Vite web interface in the default browser
+        print(f"🌐 Opening web interface at http://localhost:{vite_port}/")
+        try:
+            webbrowser.open(f"http://localhost:{vite_port}/")
+            print(f"✅ Web interface opened in browser!\n🔗 Manual URL: http://localhost:{vite_port}/")
+        except Exception as e:
+            broadcast_log_message(f"Could not open browser automatically: {e}", "System", "warning")
+            print(f"🔗 Please manually open: http://localhost:{vite_port}/")
+        print("🛑 Press Ctrl+C to stop the servers")
+        # Load config and instantiate modules at startup
+        config_path = Path("config/interactions/interactions.json")
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            interactions = config.get('interactions', [])
+            global loader
+            loader = ModuleLoader("modules")
+            global module_instances
+            module_instances = []
+            for interaction in interactions:
+                # Start input module
+                input_mod = interaction["input"]["module"]
+                input_cfg = interaction["input"]["config"]
+                input_instance = create_and_start_module(loader, input_mod, input_cfg, event_callback=on_event)
+                if input_instance is not None:
+                    input_instance.module_id = input_mod
+                    module_instances.append(input_instance)
+                # Start output module
+                output_mod = interaction["output"]["module"]
+                output_cfg = interaction["output"]["config"]
+                output_instance = create_and_start_module(loader, output_mod, output_cfg, event_callback=on_event)
+                if output_instance is not None:
+                    output_instance.module_id = output_mod
+                    module_instances.append(output_instance)
             # Start aiohttp server (blocking call)
             web.run_app(app, port=8000)
             # Keep the main thread running
@@ -1104,7 +1058,6 @@ def main():
     except KeyboardInterrupt:
         print("\n🛑 Application interrupted by user")
     except Exception as e:
-        # print(f"💥 Application error: {e}")
         broadcast_log_message(f"Application error: {e}", "System", "error")
     finally:
         remove_lock_file(lock_file)

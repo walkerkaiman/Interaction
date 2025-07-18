@@ -19,11 +19,13 @@ interface LogEntry {
 }
 
 const Console: React.FC = () => {
+  connectWebSocket(); // Ensure WebSocket is connected
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [category, setCategory] = useState('all');
 
   useEffect(() => {
     const handler = (data: any) => {
+      console.log('[WS DEBUG] Received message:', JSON.stringify(data, null, 2)); // Print full message
       if (data.type === 'console_log') {
         setLogs(prev => {
           const newLogs = [...prev, {

@@ -22,7 +22,3 @@ pytest-asyncio>=0.21.0
 pytest-playwright>=0.4.4
 playwright>=1.40.0
 httpx>=0.24.0
-
-# Optional: Development and testing (uncomment if needed)
-# black>=23.0.0
-# flake8>=6.0.0

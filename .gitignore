@@ -233,3 +233,13 @@ coverage/
 *.tsbuildinfo
 .eslintcache
 .stylelintcache
+
+# Playwright and frontend integration test artifacts
+/playwright-report/
+/test-results/
+/.playwright/
+web-frontend/test-results/
+web-frontend/playwright-report/
+web-frontend/.playwright/
+# End-to-end and integration test output
+/tests/*.spec.ts

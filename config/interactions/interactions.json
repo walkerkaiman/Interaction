@@ -5,15 +5,25 @@
       "input": {
         "module": "time_input_trigger",
         "config": {
-          "target_time": "17:00:00"
+          "target_time": "16:00:00"
         }
       },
       "output": {
         "module": "audio_output",
         "config": {
-          "file_path": "Arcade.wav",
-          "volume": 58
+          "file_path": "Sweep.wav",
+          "volume": 74
         }
+      }
+    },
+    {
+      "input": {
+        "module": "frames_input_streaming",
+        "config": {}
+      },
+      "output": {
+        "module": "audio_output",
+        "config": {}
       }
     }
   ]

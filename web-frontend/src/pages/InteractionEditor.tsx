@@ -131,6 +131,7 @@ const InteractionEditor: React.FC = () => {
     const messageHandler = (data: any) => {
       // Check if this is a clock input event (has current_time and countdown)
       if (data.current_time && data.countdown && data.instance_id) {
+        console.log('Clock event received:', data, 'Instance mapping:', instanceIdMapping);
         // Find which interaction this matches by instance_id
         const interactionIndex = instanceIdMapping[data.instance_id];
         if (interactionIndex !== undefined) {
@@ -160,33 +161,46 @@ const InteractionEditor: React.FC = () => {
     // Clear old mappings and rebuild
     setInstanceIdMapping({});
     setClockTimes({});
-    
-    // Fetch current module instances to build mapping
+
+    let retryCount = 0;
+    const maxRetries = 5;
+    const retryDelay = 1000; // ms
+
     const updateInstanceMapping = async () => {
       try {
         const instancesData = await fetchModuleInstances();
         const newMapping: Record<string, number> = {};
-        
         // Build mapping from instance_id to interaction index
         instancesData.instances.forEach((instance: any) => {
-          // Match instance to interaction by module type and config
           interactions.forEach((interaction, idx) => {
-            if (interaction.input.module === instance.module_id && 
-                JSON.stringify(interaction.input.config) === JSON.stringify(instance.config)) {
+            if (
+              interaction.input.module === instance.module_id &&
+              JSON.stringify(interaction.input.config) === JSON.stringify(instance.config)
+            ) {
               newMapping[instance.instance_id] = idx;
             }
           });
         });
-        
         setInstanceIdMapping(newMapping);
+        // If mapping is empty and we haven't hit max retries, try again after delay
+        if (Object.keys(newMapping).length === 0 && retryCount < maxRetries) {
+          retryCount++;
+          setTimeout(updateInstanceMapping, retryDelay);
+        }
       } catch (error) {
         console.error('Failed to fetch module instances:', error);
+        // Optionally retry on error as well
+        if (retryCount < maxRetries) {
+          retryCount++;
+          setTimeout(updateInstanceMapping, retryDelay);
+        }
       }
     };
-    
+
     if (interactions.length > 0) {
       updateInstanceMapping();
     }
+    // No cleanup needed for retry timeouts since they are short-lived
   }, [interactions]);
 
   // Function to refresh instance mapping after module restarts

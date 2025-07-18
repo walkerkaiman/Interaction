@@ -1,29 +1,15 @@
 {
-  "name": "Clock Input",
+  "name": "Time Input",
   "type": "input",
   "classification": "trigger",
-  "mode": "trigger",
-  "description": "Fires an event when the real local time matches the user-input target time (HH:MM:SS). Displays current time.",
+  "description": "Time-based input module for triggering events at a specific time.",
   "fields": [
     {
       "name": "target_time",
-      "type": "text",
-      "label": "Target Time (HH:MM:SS)",
-      "default": "12:00:00"
-    },
-    {
-      "name": "current_time",
-      "type": "label",
-      "label": "Current Time",
-      "runtime_update": true,
-      "default": "--:--:--"
-    },
-    {
-      "name": "countdown",
-      "type": "label",
-      "label": "Time Until Target",
-      "runtime_update": true,
-      "default": "--:--:--"
+      "type": "string",
+      "label": "Target Time",
+      "default": "12:00:00",
+      "description": "The time of day to trigger the event (HH:MM:SS)."
     }
   ]
 } 

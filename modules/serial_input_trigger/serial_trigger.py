@@ -1,11 +1,10 @@
 import serial
 import threading
 import time
-from modules.module_base import ModuleBase
-from module_loader import get_thread_pool
+from modules.module_base import DedicatedThreadModule
 from main import broadcast_log_message
 
-class SerialTriggerModule(ModuleBase):
+class SerialTriggerModule(DedicatedThreadModule):
     def __init__(self, config, manifest, log_callback=print, strategy=None):
         super().__init__(config, manifest, log_callback, strategy=strategy)
         
@@ -20,47 +19,11 @@ class SerialTriggerModule(ModuleBase):
         self.connection_status = "Disconnected"
         self.last_received_data = "No data received"
         
-        # Thread management
-        self._thread = None
-        self._running = False
-        
-        # Get optimized thread pool
-        self.thread_pool = get_thread_pool()
-        
-        # Event-driven timing
-        self._stop_event = threading.Event()
+        # Thread/event management handled by DedicatedThreadModule
         
         broadcast_log_message(f"Serial Trigger initialized - Port: {self.serial_port}, Baud: {self.baud_rate}", module=self.__class__.__name__, category='serial')
 
-    def start(self):
-        super().start()
-        if not self._running:
-            self._running = True
-            self._stop_event.clear()
-            # Use optimized thread pool instead of creating new thread
-            self._thread = self.thread_pool.submit_realtime(self._run)
-            broadcast_log_message("🔌 Serial trigger started", module=self.__class__.__name__, category='serial')
-
-    def stop(self):
-        self._running = False
-        self._stop_event.set()  # Signal thread to stop
-        if self._thread:
-            self._thread.cancel()  # Cancel the thread pool task
-        super().stop()
-        self._close_serial()
-        broadcast_log_message(f"🛑 Serial trigger stopped (instance {self.instance_id})", module=self.__class__.__name__, category='serial')
-
-    def wait_for_stop(self):
-        """
-        Wait for the serial reading thread to finish.
-        """
-        # If using a thread pool future, wait for it to finish if possible
-        if self._thread and hasattr(self._thread, 'result'):
-            try:
-                self._thread.result(timeout=1)
-            except Exception:
-                pass
-        self._thread = None
+    # start/stop/wait_for_stop handled by DedicatedThreadModule
 
     def _open_serial(self):
         """Open serial connection with event-driven retry logic"""

@@ -26,6 +26,7 @@ from message_router import EventRouter
 from abc import ABC, abstractmethod
 import uuid
 import time
+import threading
 
 class ModuleStrategy(ABC):
     @abstractmethod
@@ -187,6 +188,7 @@ class ModuleBase:
     def emit_event(self, data: Dict[str, Any]):
         data = dict(data)  # Copy to avoid mutating caller's dict
         data['instance_id'] = self.instance_id  # Always include instance_id
+        print(f"[EMIT DEBUG] {self.__class__.__name__} emitting event: {data}")
         self.log_message(f"Emitting event: {data}")
         self.event_router.publish('module_event', {'module': self, 'data': data}, settings=self.config)
         # For backward compatibility, call direct callbacks
@@ -277,3 +279,44 @@ class ModuleBase:
 
     def set_state_obj(self, new_state_obj: ModuleState):
         self.state_obj = new_state_obj
+
+class DedicatedThreadModule(ModuleBase):
+    threading_model = "dedicated_thread"
+
+    def __init__(self, config, manifest, log_callback=None, strategy=None):
+        super().__init__(config, manifest, log_callback, strategy)
+        self._thread = None
+        self._stop_event = threading.Event()
+        self._running = False
+
+    def start(self):
+        print(f"[THREAD DEBUG] DedicatedThreadModule.start() called for instance {self.instance_id}")
+        print(f"[THREAD DEBUG] self.__class__ in start: {self.__class__}")
+        super().start()
+        if not self._running:
+            print(f"[THREAD DEBUG] Starting thread for {self.__class__.__name__} instance {self.instance_id}")
+            self._running = True
+            self._stop_event.clear()
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+            self.log_message(f"{self.__class__.__name__} started.")
+
+    def stop(self):
+        self._running = False
+        self._stop_event.set()
+        super().stop()
+        self.wait_for_stop()
+        self.log_message(f"{self.__class__.__name__} stopped.")
+
+    def wait_for_stop(self):
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=0.5)
+            if self._thread.is_alive():
+                self.log_message(f"[WARN] {self.__class__.__name__} thread did not stop within 0.5s timeout.")
+        self._thread = None
+
+    def _run(self):
+        print(f"[THREAD DEBUG] DedicatedThreadModule._run called for {self.__class__}")
+        while self._running and not self._stop_event.is_set():
+            # To be implemented by subclasses
+            time.sleep(1)
