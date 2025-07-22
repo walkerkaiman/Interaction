@@ -17,6 +17,7 @@ help:
 	@echo "  test-quick          Run quick tests (unit + API)"
 	@echo "  test-api            Run API tests"
 	@echo "  test-frontend       Run frontend UI tests"
+	@echo "  test-frames-input   Run Frames Input module tests"
 	@echo "  test-performance    Run performance tests"
 	@echo "  test-integration    Run integration tests"
 	@echo "  test-all            Run all tests"
@@ -62,6 +63,10 @@ test-api:
 test-frontend:
 	@echo "🖥️ Running frontend tests..."
 	python tests/run_tests.py frontend
+
+test-frames-input:
+	@echo "🎬 Running Frames Input module tests..."
+	python tests/run_tests.py frames-input
 
 test-performance:
 	@echo "⚡ Running performance tests..."

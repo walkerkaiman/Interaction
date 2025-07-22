@@ -1,0 +1,12 @@
+{
+  "name": "Serial Input",
+  "type": "input",
+  "classification": "trigger",
+  "mode": "trigger",
+  "description": "Receive triggers from serial devices.",
+  "fields": [
+    { "name": "port", "type": "text", "label": "Serial Port", "default": "" },
+    { "name": "baud_rate", "type": "number", "label": "Baud Rate", "default": 9600 },
+    { "name": "trigger_condition", "type": "text", "label": "Trigger Condition", "default": "" }
+  ]
+} 

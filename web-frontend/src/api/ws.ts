@@ -1,38 +1,31 @@
-import { io, Socket } from 'socket.io-client';
-
-const WS_URL = 'ws://localhost:8000/ws/events'; // Updated to match backend
-
 let socket: WebSocket | null = null;
 let messageHandlers: ((data: any) => void)[] = [];
 
 export function connectWebSocket() {
   if (!socket) {
-    socket = new WebSocket('ws://localhost:8000/ws/events');
+    const wsUrl = `ws://${window.location.hostname}:8000/`;
+    socket = new WebSocket(wsUrl);
 
     socket.onopen = () => {
-      // console.log('WebSocket connected');
+      // Connection opened
     };
 
     socket.onclose = () => {
-      // console.log('WebSocket disconnected');
+      // Connection closed
     };
 
-    socket.onmessage = (event) => {
+    socket.onmessage = (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data);
-        // console.log('Received event:', data);
-        // console.log('Number of message handlers:', messageHandlers.length);
-        // Call all registered message handlers
-        messageHandlers.forEach((handler, index) => {
+        messageHandlers.forEach((handler: (data: any) => void) => {
           try {
-            // console.log(`Calling handler ${index}:`, handler);
             handler(data);
           } catch (e) {
             console.error('Error in message handler:', e);
           }
         });
       } catch (e) {
-        // console.log('Received non-JSON message:', event.data);
+        // Non-JSON message
       }
     };
   }

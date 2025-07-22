@@ -1,0 +1,21 @@
+{
+  "name": "frames-input-tests",
+  "version": "1.0.0",
+  "description": "Unit tests for the Frames Input module",
+  "scripts": {
+    "test:backend": "python -m pytest test_frames_input_backend.py -v",
+    "test:ui": "playwright test",
+    "test:ui:headed": "playwright test --headed",
+    "test:ui:debug": "playwright test --debug",
+    "test:all": "npm run test:backend && npm run test:ui",
+    "install:browsers": "playwright install",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+} 

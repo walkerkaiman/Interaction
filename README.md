@@ -2,7 +2,7 @@
 
 A modular Python framework for creating interactive art installations using microservices that communicate over OSC (Open Sound Control). This system allows you to build complex interactive experiences by connecting input modules (sensors, triggers, etc.) to output modules (audio, video, lighting, etc.) through both a web-based interface and traditional GUI.
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 ### Microservice Design
 The Interaction framework uses a microservice architecture where each component is a self-contained module:

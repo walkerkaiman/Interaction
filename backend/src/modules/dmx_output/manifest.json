@@ -1,0 +1,12 @@
+{
+  "name": "DMX Output",
+  "type": "output",
+  "classification": "streaming",
+  "mode": "adaptive",
+  "description": "Control lighting and DMX devices.",
+  "fields": [
+    { "name": "protocol", "type": "text", "label": "Protocol", "default": "sACN" },
+    { "name": "port", "type": "text", "label": "Port", "default": "" },
+    { "name": "csv_file", "type": "filepath", "label": "CSV File", "default": "" }
+  ]
+} 

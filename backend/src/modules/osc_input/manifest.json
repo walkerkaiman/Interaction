@@ -1,0 +1,11 @@
+{
+  "name": "OSC Input",
+  "type": "input",
+  "classification": "trigger",
+  "mode": "trigger",
+  "description": "Receive OSC messages from external devices.",
+  "fields": [
+    { "name": "port", "type": "number", "label": "Port", "default": 8000 },
+    { "name": "address", "type": "text", "label": "OSC Address", "default": "/trigger" }
+  ]
+} 

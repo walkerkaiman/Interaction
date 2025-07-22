@@ -151,6 +151,7 @@ make validate          # Validate test setup
 make test-quick        # Quick tests (recommended for development)
 make test-api          # API tests only
 make test-frontend     # Frontend UI tests only
+make test-frames-input # Frames Input module tests
 make test-performance  # Performance benchmarks
 make test-integration  # End-to-end tests
 make test-all          # Everything
@@ -174,6 +175,7 @@ make watch            # Watch files and run tests on changes
 # Run specific test types
 python tests/run_tests.py api           # Just API tests
 python tests/run_tests.py frontend      # Just UI tests
+python tests/run_tests.py frames-input  # Frames Input module tests
 python tests/run_tests.py performance   # Just performance tests
 
 # Run with different options
@@ -194,6 +196,66 @@ Edit `.github/workflows/tests.yml` to:
 - Modify when tests run (branches, schedule)
 - Add notifications (Slack, email, etc.)
 - Add deployment steps after successful tests
+
+---
+
+## 🎬 **Frames Input Module Tests**
+
+The Frames Input module has comprehensive testing covering both backend functionality and UI interactions.
+
+### Test Structure
+```
+tests/frames_input/
+├── test_frames_input_backend.py    # Backend unit tests
+├── test_frames_input_ui.spec.ts    # Playwright UI tests
+├── run_tests.py                    # Test runner
+├── package.json                    # Playwright dependencies
+└── playwright.config.ts           # Playwright configuration
+```
+
+### Running Frames Input Tests
+```bash
+# Run all Frames Input tests (backend + UI)
+make test-frames-input
+
+# Or using the test runner directly
+python tests/run_tests.py frames-input
+
+# Run just the backend tests
+python -m pytest tests/frames_input/test_frames_input_backend.py -v
+
+# Run just the UI tests
+python tests/frames_input/run_tests.py
+
+# Run UI tests in headless mode (for CI)
+python tests/frames_input/run_tests.py --headless
+```
+
+### What's Tested
+
+#### Backend Tests:
+- Module initialization and configuration
+- Manifest loading and validation
+- Frame extraction from sACN data
+- Trigger logic and event emission
+- State tracking and updates
+- Error handling and edge cases
+- sACN receiver lifecycle management
+
+#### UI Tests:
+- Module selection and configuration
+- Mode switching (streaming/trigger)
+- Conditional field visibility
+- Trigger configuration and validation
+- Configuration persistence
+- Input validation and error handling
+- Module switching and compatibility
+
+### Integration with Main Test Suite
+- **Quick tests**: Backend tests included in quick regression suite
+- **All tests**: Both backend and UI tests run in full test suite
+- **CI/CD**: Headless UI tests run in automated CI pipeline
+- **Git hooks**: Backend tests run on pre-commit
 
 ---
 
@@ -237,6 +299,10 @@ playwright install chromium
 
 # Run with visible browser for debugging
 pytest tests/test_frontend_ui.py --headed --slowmo=1000
+
+# For Frames Input UI tests
+python tests/frames_input/run_tests.py  # Interactive mode
+python tests/frames_input/run_tests.py --headless  # Headless mode
 ```
 
 ### Slow tests:

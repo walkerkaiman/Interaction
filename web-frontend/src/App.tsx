@@ -1,39 +1,50 @@
-import React, { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
-import { AppBar, Toolbar, Typography, Drawer, List, ListItem, ListItemText, Box, CssBaseline } from '@mui/material';
-import Wiki from './pages/Wiki';
-import Events from './pages/Events';
-import InteractionEditor from './pages/InteractionEditor';
-import Performance from './pages/Performance';
-import connectWebSocket from './api/ws';
-import ModuleWikiPage from './pages/ModuleWikiPage';
+import { useState } from 'react';
+import { CssBaseline, Box, Drawer, List, ListItem, ListItemButton, ListItemText, ThemeProvider, createTheme } from '@mui/material';
+import WikiPage from './pages/Wiki';
 import Console from './pages/Console';
+import Performance from './pages/Performance';
 
 const drawerWidth = 220;
-
-const navItems = [
-  { text: 'Wiki', path: '/modules' },
-  { text: 'Interactions', path: '/editor' },
-  { text: 'Console', path: '/console' },
-  { text: 'Performance', path: '/performance' },
+const pages = [
+  { label: 'Module Wiki', key: 'wiki' },
+  { label: 'Interactions', key: 'interactions' },
+  { label: 'Console', key: 'console' },
+  { label: 'Performance', key: 'performance' },
 ];
 
-const App: React.FC = () => {
-  useEffect(() => {
-    connectWebSocket();
-  }, []);
+const darkTheme = createTheme({
+  palette: {
+    mode: 'dark',
+  },
+});
+
+const InteractionsPage = () => <div><h2>Interactions</h2><p>Interactions page placeholder.</p></div>;
+
+const App = () => {
+  const [selected, setSelected] = useState('wiki');
+
+  let content = null;
+  switch (selected) {
+    case 'wiki':
+      content = <WikiPage />;
+      break;
+    case 'interactions':
+      content = <InteractionsPage />;
+      break;
+    case 'console':
+      content = <Console />;
+      break;
+    case 'performance':
+      content = <Performance />;
+      break;
+    default:
+      content = null;
+  }
 
   return (
-    <Router>
-      <Box sx={{ display: 'flex' }}>
-        <CssBaseline />
-        <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
-          <Toolbar>
-            <Typography variant="h6" noWrap component="div">
-              Interactive Art Installation
-            </Typography>
-          </Toolbar>
-        </AppBar>
+    <ThemeProvider theme={darkTheme}>
+      <CssBaseline />
+      <Box sx={{ display: 'flex', height: '100vh' }}>
         <Drawer
           variant="permanent"
           sx={{
@@ -42,32 +53,21 @@ const App: React.FC = () => {
             [`& .MuiDrawer-paper`]: { width: drawerWidth, boxSizing: 'border-box' },
           }}
         >
-          <Toolbar />
-          <Box sx={{ overflow: 'auto' }}>
-            <List>
-              {navItems.map((item) => (
-                <ListItem key={item.text} disablePadding>
-                  <Link to={item.path} style={{ textDecoration: 'none', color: 'inherit', width: '100%' }}>
-                    <ListItemText primary={item.text} sx={{ pl: 2, py: 1.5 }} />
-                  </Link>
-                </ListItem>
-              ))}
-            </List>
-          </Box>
+          <List>
+            {pages.map((page) => (
+              <ListItem key={page.key} disablePadding>
+                <ListItemButton selected={selected === page.key} onClick={() => setSelected(page.key)}>
+                  <ListItemText primary={page.label} />
+                </ListItemButton>
+              </ListItem>
+            ))}
+          </List>
         </Drawer>
-        <Box component="main" sx={{ flexGrow: 1, bgcolor: 'background.default', p: 3, ml: `${drawerWidth}px` }}>
-          <Toolbar />
-          <Routes>
-            <Route path="/modules" element={<Wiki />} />
-            <Route path="/modules/:id" element={<ModuleWikiPage />} />
-            <Route path="/editor" element={<InteractionEditor />} />
-            <Route path="/console" element={<Console />} />
-            <Route path="/performance" element={<Performance />} />
-            <Route path="*" element={<Wiki />} />
-          </Routes>
+        <Box component="main" sx={{ flexGrow: 1, p: 3, overflow: 'auto' }}>
+          {content}
         </Box>
       </Box>
-    </Router>
+    </ThemeProvider>
   );
 };
 
