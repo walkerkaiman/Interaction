@@ -42,6 +42,36 @@
         "module": "audio_output",
         "config": {}
       }
+    },
+    {
+      "input": {
+        "module": "time_input",
+        "config": {
+          "target_time": "08:00:00"
+        }
+      },
+      "output": {
+        "module": "audio_output",
+        "config": {
+          "file_path": "Arcade.wav"
+        }
+      }
+    },
+    {
+      "input": {
+        "module": "time_input",
+        "config": {
+          "target_time": "10:00:00"
+        }
+      },
+      "output": {
+        "module": "osc_output",
+        "config": {
+          "ip_address": "192.168.5.5",
+          "port": 8000,
+          "address": "/hi"
+        }
+      }
     }
   ]
 }

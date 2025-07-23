@@ -7,8 +7,10 @@ import * as path from 'path';
 import { spawn } from 'child_process';
 import * as pureimage from 'pureimage';
 
-const WAVEFORM_CACHE_DIR = path.join(__dirname, 'waveform_cache');
-if (!fs.existsSync(WAVEFORM_CACHE_DIR)) fs.mkdirSync(WAVEFORM_CACHE_DIR);
+const WAVEFORM_IMAGE_DIR = path.join(__dirname, 'assets', 'image');
+if (!fs.existsSync(WAVEFORM_IMAGE_DIR)) {
+  fs.mkdirSync(WAVEFORM_IMAGE_DIR, { recursive: true });
+}
 
 export class AudioOutputModule extends OutputModuleBase {
   static manifest = manifest;
@@ -70,37 +72,44 @@ export class AudioOutputModule extends OutputModuleBase {
     ffplay.unref();
   }
 
-  async generateWaveform(filePath: string) {
-    if (!filePath || !fs.existsSync(filePath)) return;
-    const cacheFile = path.join(WAVEFORM_CACHE_DIR, path.basename(filePath) + '.waveform.png');
+  public async generateWaveform(filePath: string) {
+    if (!filePath || !fs.existsSync(filePath)) {
+      this.log('Audio file not found: ' + filePath, 'Audio');
+      return;
+    }
+    const cacheFile = path.join(WAVEFORM_IMAGE_DIR, path.basename(filePath) + '.waveform.svg');
     if (fs.existsSync(cacheFile)) {
       this.waveformCache[filePath] = cacheFile;
       return cacheFile;
     }
     try {
+      this.log('Generating SVG waveform for: ' + filePath, 'Audio');
       const buffer = fs.readFileSync(filePath);
       const audioData = await wav.decode(buffer);
       const channelData = audioData.channelData[0];
       const width = 400, height = 100;
-      const img = pureimage.make(width, height, {});
-      const ctx = img.getContext('2d');
-      ctx.fillStyle = 'black';
-      ctx.fillRect(0, 0, width, height);
-      ctx.strokeStyle = 'lime';
-      ctx.beginPath();
-      for (let x = 0; x < width; x++) {
-        const idx = Math.floor((x / width) * channelData.length);
-        const y = (1 - (channelData[idx] + 1) / 2) * height;
-        if (x === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+      const samples = Math.min(400, channelData.length);
+      const step = Math.floor(channelData.length / samples);
+      let svgPath = '';
+      for (let x = 0; x < samples; x++) {
+        const idx = x * step;
+        const sample = channelData[idx] || 0;
+        const y = (1 - (sample + 1) / 2) * height;
+        if (x === 0) {
+          svgPath += `M ${x} ${y}`;
+        } else {
+          svgPath += ` L ${x} ${y}`;
+        }
       }
-      ctx.stroke();
-      await pureimage.encodePNGToStream(img, fs.createWriteStream(cacheFile));
+      const svg = `<?xml version="1.0" encoding="UTF-8"?>\n<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">\n  <rect width="${width}" height="${height}" fill="black"/>\n  <path d="${svgPath}" stroke="lime" stroke-width="1" fill="none"/>\n</svg>`;
+      fs.writeFileSync(cacheFile, svg);
       this.waveformCache[filePath] = cacheFile;
-      this.log('Waveform generated: ' + cacheFile, 'Audio');
+      this.log('SVG waveform generated successfully: ' + cacheFile, 'Audio');
       return cacheFile;
     } catch (err) {
       this.log('Waveform generation error: ' + err, 'Audio');
+      console.error('Waveform generation failed:', err);
+      throw err;
     }
   }
 

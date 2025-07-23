@@ -221,18 +221,40 @@ app.post('/modules/:id/mode', async (req: Request, res: Response) => {
   res.json({ success: true, mode });
 });
 
-// --- Serve waveform PNG for audio_output ---
-app.get('/api/module_waveform/:module', (req: Request, res: Response) => {
+// --- Serve waveform SVG for audio_output ---
+app.get('/api/module_waveform/:module', async (req: Request, res: Response) => {
   const moduleName = req.params.module;
   if (moduleName !== 'audio_output') return res.status(404).send('Not found');
-  const mod = modules.find(m => m.getModuleName() === 'audio_output');
-  if (!mod || !mod.config.file_path) return res.status(404).send('No audio file');
-  const filePath = mod.config.file_path;
-  const cacheDir = path.resolve(__dirname, '../src/modules/audio_output/waveform_cache');
-  const waveformFile = path.join(cacheDir, path.basename(filePath) + '.waveform.png');
+
+  // Get the filename from the query
+  const fileName = req.query.file as string;
+  if (!fileName) return res.status(400).send('No file specified');
+
+  // Path to the audio file
+  const audioDir = path.resolve(__dirname, './modules/audio_output/assets/audio');
+  const audioFilePath = path.join(audioDir, fileName);
+
+  // Path to the waveform image
+  const imageDir = path.resolve(__dirname, './modules/audio_output/assets/image');
+  const waveformFile = path.join(imageDir, fileName + '.waveform.svg');
+
+  // Generate waveform if it doesn't exist
+  if (!fs.existsSync(waveformFile)) {
+    try {
+      const { AudioOutputModule } = require('./modules/audio_output');
+      const tempModule = new AudioOutputModule({}, (msg: string) => console.log(msg));
+      await tempModule.generateWaveform(audioFilePath);
+    } catch (err) {
+      console.error('Failed to generate waveform:', err);
+      return res.status(500).send('Failed to generate waveform');
+    }
+  }
+
   if (!fs.existsSync(waveformFile)) {
     return res.status(404).send('Waveform not found');
   }
+
+  res.setHeader('Content-Type', 'image/svg+xml');
   res.sendFile(waveformFile);
 });
 
@@ -340,6 +362,18 @@ const audioDir = path.resolve(__dirname, '../src/modules/audio_output/assets/aud
 if (!fs.existsSync(audioDir)) fs.mkdirSync(audioDir, { recursive: true });
 const upload = multer({ dest: audioDir });
 
+const { execSync } = require('child_process');
+
+function convertWavToPcm(inputPath: string, outputPath: string): boolean {
+  try {
+    execSync(`ffmpeg -y -i "${inputPath}" -acodec pcm_s16le -ar 44100 "${outputPath}"`);
+    return true;
+  } catch (err: any) {
+    console.error('ffmpeg conversion failed:', err);
+    return false;
+  }
+}
+
 // List audio files
 app.get('/api/audio_files', (req: Request, res: Response) => {
   console.log('DEBUG: GET /api/audio_files called');
@@ -357,24 +391,48 @@ app.get('/api/audio_files', (req: Request, res: Response) => {
 });
 
 // Upload audio file
-app.post('/api/audio_files', upload.single('file'), (req: Request, res: Response) => {
+app.post('/api/audio_files', upload.single('file'), async (req: Request, res: Response) => {
   console.log('DEBUG: POST /api/audio_files called');
   if (!req.file) {
     console.error('ERROR: No file uploaded');
     return res.status(400).json({ error: 'No file uploaded' });
   }
-  const destPath = path.join(audioDir, req.file.originalname);
+  const srcAudioDir = path.resolve(__dirname, '../src/modules/audio_output/assets/audio');
+  const distAudioDir = path.resolve(__dirname, './modules/audio_output/assets/audio');
+  if (!fs.existsSync(srcAudioDir)) fs.mkdirSync(srcAudioDir, { recursive: true });
+  if (!fs.existsSync(distAudioDir)) fs.mkdirSync(distAudioDir, { recursive: true });
+  const destPathSrc = path.join(srcAudioDir, req.file.originalname);
+  const destPathDist = path.join(distAudioDir, req.file.originalname);
   console.log('DEBUG: Upload attempt for file:', req.file.originalname);
-  if (fs.existsSync(destPath)) {
+  if (fs.existsSync(destPathSrc) || fs.existsSync(destPathDist)) {
     console.warn('WARNING: File already exists:', req.file.originalname);
     return res.status(409).json({ error: 'File already exists' });
   }
   try {
-    fs.renameSync(req.file.path, destPath);
-    console.log('DEBUG: File saved as:', destPath);
+    // Move uploaded file to src
+    fs.renameSync(req.file.path, destPathSrc);
+    // Try to generate waveform to check if conversion is needed
+    let needsConversion = false;
+    try {
+      const { AudioOutputModule } = require('./modules/audio_output');
+      const tempModule = new AudioOutputModule({}, (msg: string) => console.log(msg));
+      await tempModule.generateWaveform(destPathSrc);
+    } catch (err: any) {
+      needsConversion = true;
+    }
+    if (needsConversion) {
+      const tempPath = destPathSrc + '.converted.wav';
+      if (convertWavToPcm(destPathSrc, tempPath)) {
+        fs.renameSync(tempPath, destPathSrc);
+        // Optionally, regenerate waveform here if needed
+      }
+    }
+    // Copy to dist
+    fs.copyFileSync(destPathSrc, destPathDist);
+    console.log('DEBUG: File saved as:', destPathSrc, 'and copied to:', destPathDist);
     broadcastWS({ type: 'audio_files_update' });
     res.json({ success: true, filename: req.file.originalname });
-  } catch (err) {
+  } catch (err: any) {
     console.error('ERROR: Failed to save uploaded file:', err);
     return res.status(500).json({ error: 'Failed to save file' });
   }
@@ -402,6 +460,51 @@ app.get('*', (req: Request, res: Response) => {
 
 const PORT = Number(process.env.PORT) || 8000;
 const HOST = '0.0.0.0';
+
+// Ensure all audio files in dist have a waveform SVG in dist image dir
+const distAudioDir = path.resolve(__dirname, './modules/audio_output/assets/audio');
+const distImageDir = path.resolve(__dirname, './modules/audio_output/assets/image');
+if (!fs.existsSync(distImageDir)) fs.mkdirSync(distImageDir, { recursive: true });
+
+(async () => {
+  try {
+    const { AudioOutputModule } = require('./modules/audio_output');
+    const tempModule = new AudioOutputModule({}, (msg: string) => console.log(msg));
+    const audioFiles = fs.readdirSync(distAudioDir).filter((f: string) => f.endsWith('.wav') || f.endsWith('.mp3'));
+    for (const audioFile of audioFiles) {
+      const audioPath = path.join(distAudioDir, audioFile);
+      const imagePath = path.join(distImageDir, audioFile + '.waveform.svg');
+      if (!fs.existsSync(imagePath)) {
+        let success = false;
+        try {
+          await tempModule.generateWaveform(audioPath);
+          console.log(`Generated waveform for ${audioFile}`);
+          success = true;
+        } catch (err: any) {
+          console.warn(`Waveform decode failed for ${audioFile}: ${err.message}, attempting conversion...`);
+          const tempPath = audioPath + '.converted.wav';
+          if (convertWavToPcm(audioPath, tempPath)) {
+            try {
+              await tempModule.generateWaveform(tempPath);
+              fs.renameSync(tempPath, audioPath);
+              console.log(`Converted and generated waveform for ${audioFile}`);
+              success = true;
+            } catch (err2: any) {
+              console.error(`Failed after conversion for ${audioFile}:`, err2);
+              if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+            }
+          }
+        }
+        if (!success) {
+          console.error(`Failed to process ${audioFile}, skipping.`);
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error('Startup waveform check failed:', err);
+  }
+})();
+
 server.listen(PORT, HOST, () => {
   logger.log(`Server started on http://${HOST}:${PORT}`, 'System');
 }); 
