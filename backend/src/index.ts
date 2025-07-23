@@ -1,18 +1,41 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
-import { Logger } from './core/Logger';
-import { ModuleLoader } from './core/ModuleLoader';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import fs from 'fs';
+
+import { Logger } from './core/Logger';
+import { ModuleLoader } from './core/ModuleLoader';
 import multer from 'multer';
 import { MessageRouter } from './core/MessageRouter';
 import { getSystemStats, getSystemInfo, getProcesses, getServices } from './core/SystemStats';
 
 const app = express();
 app.use(express.json());
+
+// Add CORS headers for loading screen
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
+
 const logger = new Logger('System');
 const moduleLoader = new ModuleLoader(logger);
+
+console.log('=== Backend server starting, using', __filename);
+console.log('=== TEST LOG: index.ts loaded ===');
+
+// Catch-all API log (before all API endpoints)
+app.use('/api', (req, res, next) => {
+  console.log('DEBUG: API request received:', req.method, req.originalUrl);
+  next();
+});
 
 // --- Load config and instantiate modules ---
 const configPath = path.join(__dirname, '../../config/interactions/interactions.json');
@@ -56,6 +79,15 @@ setInterval(async () => {
 }, 1000);
 
 // --- API Endpoints ---
+app.get('/api/status', (req, res) => {
+  res.json({ 
+    status: 'ready', 
+    timestamp: new Date().toISOString(),
+    modules: modules.length,
+    interactions: interactions.length
+  });
+});
+
 app.get('/api/system_info', async (req, res) => {
   try {
     const info = await getSystemInfo();
@@ -190,51 +222,6 @@ app.get('/api/module_waveform/:module', (req: Request, res: Response) => {
   res.sendFile(waveformFile);
 });
 
-// --- Serve frontend static files ---
-const frontendDist = path.join(__dirname, '../../web-frontend/dist');
-app.use(express.static(frontendDist));
-// SPA fallback: serve index.html for any non-API route
-app.get('/api/log_levels', (req, res) => {
-  res.json([
-    'System',
-    'Audio',
-    'OSC',
-    'Serial',
-    'DMX',
-    'Frames',
-    'Time',
-    'Performance',
-    'Error',
-  ]);
-});
-app.get('*', (req: Request, res: Response) => {
-  if (req.path.startsWith('/modules')) return; // Don't override API
-  res.sendFile(path.join(frontendDist, 'index.html'));
-});
-
-const audioDir = path.resolve(__dirname, '../src/modules/audio_output/assets/audio');
-if (!fs.existsSync(audioDir)) fs.mkdirSync(audioDir, { recursive: true });
-const upload = multer({ dest: audioDir });
-
-// List audio files
-app.get('/api/audio_files', (req: Request, res: Response) => {
-  fs.readdir(audioDir, (err, files) => {
-    if (err) return res.status(500).json({ error: 'Failed to list audio files' });
-    const audioFiles = files.filter(f => f.endsWith('.wav') || f.endsWith('.mp3'));
-    res.json(audioFiles);
-  });
-});
-
-// Upload audio file
-app.post('/api/audio_files', upload.single('file'), (req: Request, res: Response) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  // Optionally rename to original name
-  const destPath = path.join(audioDir, req.file.originalname);
-  fs.renameSync(req.file.path, destPath);
-  broadcastWS({ type: 'audio_files_update' });
-  res.json({ success: true, filename: req.file.originalname });
-});
-
 // Register a new interaction at runtime
 app.post('/api/interactions', async (req: Request, res: Response) => {
   const newInteraction = req.body;
@@ -321,6 +308,81 @@ app.post('/api/interactions/update', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('Failed to update interaction:', err);
     res.status(500).json({ error: 'Failed to update interaction' });
+  }
+});
+
+app.get('/api/interactions', (req: Request, res: Response) => {
+  try {
+    const configPath = path.join(__dirname, '../../config/interactions/interactions.json');
+    const configData = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    res.json(configData.interactions || []);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load interactions' });
+  }
+});
+
+// Audio file directory and endpoints (must be before static file serving)
+const audioDir = path.resolve(__dirname, '../src/modules/audio_output/assets/audio');
+if (!fs.existsSync(audioDir)) fs.mkdirSync(audioDir, { recursive: true });
+const upload = multer({ dest: audioDir });
+
+// List audio files
+app.get('/api/audio_files', (req: Request, res: Response) => {
+  console.log('DEBUG: GET /api/audio_files called');
+  console.log('DEBUG: audioDir path:', audioDir);
+  fs.readdir(audioDir, (err, files) => {
+    if (err) {
+      console.error('ERROR: Failed to list audio files:', err);
+      return res.status(500).json({ error: 'Failed to list audio files' });
+    }
+    console.log('DEBUG: All files found:', files);
+    const audioFiles = files.filter(f => f.endsWith('.wav') || f.endsWith('.mp3'));
+    console.log('DEBUG: Filtered audio files:', audioFiles);
+    res.json(audioFiles);
+  });
+});
+
+// Upload audio file
+app.post('/api/audio_files', upload.single('file'), (req: Request, res: Response) => {
+  console.log('DEBUG: POST /api/audio_files called');
+  if (!req.file) {
+    console.error('ERROR: No file uploaded');
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  const destPath = path.join(audioDir, req.file.originalname);
+  console.log('DEBUG: Upload attempt for file:', req.file.originalname);
+  if (fs.existsSync(destPath)) {
+    console.warn('WARNING: File already exists:', req.file.originalname);
+    return res.status(409).json({ error: 'File already exists' });
+  }
+  try {
+    fs.renameSync(req.file.path, destPath);
+    console.log('DEBUG: File saved as:', destPath);
+    broadcastWS({ type: 'audio_files_update' });
+    res.json({ success: true, filename: req.file.originalname });
+  } catch (err) {
+    console.error('ERROR: Failed to save uploaded file:', err);
+    return res.status(500).json({ error: 'Failed to save file' });
+  }
+});
+
+// --- All API endpoints and audio file logic above this line ---
+
+// --- Serve frontend static files (should be last!) ---
+const frontendDist = path.join(__dirname, '../../web-frontend/dist');
+
+// SPA fallback: serve index.html for any non-API route
+app.get('*', (req: Request, res: Response) => {
+  if (req.path.startsWith('/api') || req.path.startsWith('/modules')) {
+    return res.status(404).json({ error: 'API endpoint not found' });
+  }
+  // Serve static files for non-API routes
+  const filePath = path.join(frontendDist, req.path);
+  if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+    res.sendFile(filePath);
+  } else {
+    // Fallback to index.html for SPA routing
+    res.sendFile(path.join(frontendDist, 'index.html'));
   }
 });
 

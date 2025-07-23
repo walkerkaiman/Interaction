@@ -3,6 +3,10 @@ node_modules/
 .env
 .env.*
 
+# Prevent root-level package files (should only exist in backend/ and web-frontend/)
+package.json
+package-lock.json
+
 # Build output
 /dist/
 web-frontend/dist/

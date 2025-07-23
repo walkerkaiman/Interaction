@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interaction System - Loading</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            overflow: hidden;
+        }
+
+        .loading-container {
+            text-align: center;
+            max-width: 600px;
+            padding: 2rem;
+        }
+
+        .logo {
+            font-size: 3rem;
+            font-weight: bold;
+            margin-bottom: 1rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .subtitle {
+            font-size: 1.2rem;
+            margin-bottom: 2rem;
+            opacity: 0.9;
+        }
+
+        .loading-animation {
+            width: 80px;
+            height: 80px;
+            border: 4px solid rgba(255,255,255,0.3);
+            border-top: 4px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 2rem;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .progress-container {
+            width: 100%;
+            max-width: 400px;
+            margin: 0 auto 1rem;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #45a049);
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 4px;
+        }
+
+        .status-text {
+            font-size: 1rem;
+            margin-bottom: 1rem;
+            min-height: 1.5rem;
+            opacity: 0.9;
+        }
+
+        .details {
+            font-size: 0.9rem;
+            opacity: 0.7;
+            margin-top: 1rem;
+        }
+
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-container">
+        <div class="logo">Interaction System</div>
+        <div class="subtitle">Initializing...</div>
+        
+        <div class="loading-animation"></div>
+        
+        <div class="progress-container">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+        </div>
+        
+        <div class="status-text" id="statusText">Starting backend server...</div>
+        <div class="details" id="details">Please wait while the system initializes</div>
+    </div>
+
+    <script>
+        let progress = 0;
+        let statusMessages = [
+            'Starting backend server...',
+            'Loading modules...',
+            'Initializing WebSocket connections...',
+            'Preparing web interface...',
+            'System ready!'
+        ];
+        let currentStep = 0;
+        let serverReady = false;
+
+        const progressFill = document.getElementById('progressFill');
+        const statusText = document.getElementById('statusText');
+        const details = document.getElementById('details');
+
+        function updateProgress(percent, message, detail = '') {
+            progressFill.style.width = percent + '%';
+            statusText.textContent = message;
+            if (detail) {
+                details.textContent = detail;
+            }
+        }
+
+        function simulateProgress() {
+            if (currentStep < statusMessages.length - 1 && !serverReady) {
+                currentStep++;
+                const percent = Math.min((currentStep / (statusMessages.length - 1)) * 90, 90); // Cap at 90% until server is ready
+                updateProgress(percent, statusMessages[currentStep]);
+            }
+        }
+
+        // Simulate initial progress
+        setTimeout(() => simulateProgress(), 1000);
+        setTimeout(() => simulateProgress(), 2000);
+        setTimeout(() => simulateProgress(), 3000);
+
+        // Check server status
+        function checkServerStatus() {
+            fetch('http://localhost:8000/api/status')
+                .then(response => {
+                    if (response.ok) {
+                        return response.json();
+                    } else {
+                        throw new Error('Server not ready');
+                    }
+                })
+                .then(data => {
+                    if (data.status === 'ready') {
+                        serverReady = true;
+                        updateProgress(100, 'System ready!', `Loaded ${data.modules} modules and ${data.interactions} interactions`);
+                        setTimeout(() => {
+                            window.location.href = 'http://localhost:8000/';
+                        }, 1500);
+                    } else {
+                        throw new Error('Server not ready');
+                    }
+                })
+                .catch(error => {
+                    // Server not ready yet, keep checking
+                    setTimeout(checkServerStatus, 1000);
+                });
+        }
+
+        // Start checking server status after initial delay
+        setTimeout(checkServerStatus, 4000);
+
+        // Fallback: if server doesn't respond within 30 seconds, show error
+        setTimeout(() => {
+            if (progress < 100) {
+                updateProgress(100, 'Connection timeout', 'Please check if the server is running and try refreshing the page');
+                statusText.classList.add('pulse');
+            }
+        }, 30000);
+    </script>
+</body>
+</html> 

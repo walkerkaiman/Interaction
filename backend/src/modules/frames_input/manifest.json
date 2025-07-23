@@ -1,8 +1,6 @@
 {
   "name": "Frames Input",
   "type": "input",
-  "classification": "streaming",
-  "mode": "streaming",
   "description": "Receive sACN (Streaming ACN) frame data.",
   "fields": [
     { "name": "universe", "type": "number", "label": "DMX Universe", "default": 1 },

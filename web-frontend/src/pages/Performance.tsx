@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Box, Typography, Card, CardContent, LinearProgress } from '@mui/material';
+import { Box, Typography, Card, CardContent } from '@mui/material';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
 import { connectWebSocket, addMessageHandler, removeMessageHandler } from '../api/ws';
 
@@ -16,11 +16,17 @@ interface SystemInfo {
   [key: string]: any;
 }
 
-const MAX_POINTS = 60;
+interface MemoryPoint {
+  time: string;
+  memory: number;
+}
+
+const MAX_BUFFER = 200;
+const GRAPH_POINTS = 50;
 
 const Performance: React.FC = () => {
   const [stats, setStats] = useState<StatPoint[]>([]);
-  const [memory, setMemory] = useState(0);
+  const [memoryStats, setMemoryStats] = useState<MemoryPoint[]>([]);
   const [systemInfo, setSystemInfo] = useState<SystemInfo>({});
   const [uptime, setUptime] = useState(0);
   const [load, setLoad] = useState<number[]>([]);
@@ -41,9 +47,20 @@ const Performance: React.FC = () => {
               temperature: data.temperature !== null ? data.temperature : null,
             },
           ];
-          return next.length > MAX_POINTS ? next.slice(-MAX_POINTS) : next;
+          return next.length > MAX_BUFFER ? next.slice(-MAX_BUFFER) : next;
         });
-        setMemory(Math.round((data.memory || 0) * 100));
+        setMemoryStats(prev => {
+          const now = new Date();
+          const time = now.toLocaleTimeString();
+          const next = [
+            ...prev,
+            {
+              time,
+              memory: Math.round((data.memory || 0) * 100),
+            },
+          ];
+          return next.length > MAX_BUFFER ? next.slice(-MAX_BUFFER) : next;
+        });
         setUptime(data.uptime || 0);
         setLoad(data.load || []);
       }
@@ -78,7 +95,7 @@ const Performance: React.FC = () => {
             <CardContent>
               <Typography variant="h6">CPU Usage (last 60s)</Typography>
               <ResponsiveContainer width="100%" height={180}>
-                <LineChart data={stats} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                <LineChart data={stats.slice(-GRAPH_POINTS)} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                   <XAxis dataKey="time" minTickGap={15} />
                   <YAxis domain={[0, 100]} tickFormatter={v => `${v}%`} />
                   <Tooltip formatter={v => `${v}%`} />
@@ -96,13 +113,17 @@ const Performance: React.FC = () => {
         <Box flex={1}>
           <Card sx={{ mb: 2 }}>
             <CardContent>
-              <Typography variant="h6">Memory Usage</Typography>
-              <Box display="flex" alignItems="center" gap={2}>
-                <Box flex={1}>
-                  <LinearProgress variant="determinate" value={memory} sx={{ height: 16, borderRadius: 8 }} />
-                </Box>
-                <Typography>{memory}%</Typography>
-              </Box>
+              <Typography variant="h6">Memory Usage (last 50 points)</Typography>
+              <ResponsiveContainer width="100%" height={180}>
+                <LineChart data={memoryStats.slice(-GRAPH_POINTS)} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                  <XAxis dataKey="time" minTickGap={15} />
+                  <YAxis domain={[0, 100]} tickFormatter={v => `${v}%`} />
+                  <Tooltip formatter={v => `${v}%`} />
+                  <Legend />
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <Line type="monotone" dataKey="memory" stroke="#2196f3" dot={false} name="Memory %" />
+                </LineChart>
+              </ResponsiveContainer>
             </CardContent>
           </Card>
           <Card>

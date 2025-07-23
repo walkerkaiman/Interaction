@@ -1,8 +1,6 @@
 {
   "name": "Audio Output",
   "type": "output",
-  "classification": "trigger",
-  "mode": "trigger",
   "description": "Audio playback module for playing WAV files with volume control and waveform visualization",
   "fields": [
     { "name": "file_path", "type": "filepath", "label": "Audio File", "default": "" },

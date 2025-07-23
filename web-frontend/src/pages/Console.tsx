@@ -9,9 +9,22 @@ interface LogEntry {
   category: string;
 }
 
+const LOG_STORAGE_KEY = 'consoleLogs';
+
 const Console: React.FC = () => {
   connectWebSocket(); // Ensure WebSocket is connected
-  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>(() => {
+    // Load from localStorage on mount
+    const stored = localStorage.getItem(LOG_STORAGE_KEY);
+    if (stored) {
+      try {
+        return JSON.parse(stored);
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  });
   const [category, setCategory] = useState('all');
   const [logLevels, setLogLevels] = useState<string[]>([]);
 
@@ -33,7 +46,9 @@ const Console: React.FC = () => {
             timestamp: data.timestamp || new Date().toLocaleTimeString(),
             category: data.level || 'System',
           }];
-          return newLogs;
+          const sliced = newLogs.slice(-200); // Keep only the last 200 messages
+          localStorage.setItem(LOG_STORAGE_KEY, JSON.stringify(sliced));
+          return sliced;
         });
       }
     };

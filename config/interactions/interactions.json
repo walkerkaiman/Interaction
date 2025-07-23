@@ -32,6 +32,16 @@
           "volume": 41
         }
       }
+    },
+    {
+      "input": {
+        "module": "time_input",
+        "config": {}
+      },
+      "output": {
+        "module": "audio_output",
+        "config": {}
+      }
     }
   ]
 }

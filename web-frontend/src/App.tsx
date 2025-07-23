@@ -3,6 +3,7 @@ import { CssBaseline, Box, Drawer, List, ListItem, ListItemButton, ListItemText,
 import WikiPage from './pages/Wiki';
 import Console from './pages/Console';
 import Performance from './pages/Performance';
+import Interactions from './pages/Interactions';
 
 const drawerWidth = 220;
 const pages = [
@@ -18,8 +19,6 @@ const darkTheme = createTheme({
   },
 });
 
-const InteractionsPage = () => <div><h2>Interactions</h2><p>Interactions page placeholder.</p></div>;
-
 const App = () => {
   const [selected, setSelected] = useState('wiki');
 
@@ -29,7 +28,7 @@ const App = () => {
       content = <WikiPage />;
       break;
     case 'interactions':
-      content = <InteractionsPage />;
+      content = <Interactions />;
       break;
     case 'console':
       content = <Console />;

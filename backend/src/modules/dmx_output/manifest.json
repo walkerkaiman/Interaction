@@ -1,8 +1,6 @@
 {
   "name": "DMX Output",
   "type": "output",
-  "classification": "streaming",
-  "mode": "adaptive",
   "description": "Control lighting and DMX devices.",
   "fields": [
     { "name": "protocol", "type": "text", "label": "Protocol", "default": "sACN" },

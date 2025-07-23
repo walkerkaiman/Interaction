@@ -1,8 +1,6 @@
 {
   "name": "OSC Output",
   "type": "output",
-  "classification": "trigger",
-  "mode": "adaptive",
   "description": "Send OSC messages to external devices.",
   "fields": [
     { "name": "ip_address", "type": "text", "label": "IP Address", "default": "127.0.0.1" },

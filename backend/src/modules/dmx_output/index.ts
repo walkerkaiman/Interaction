@@ -2,6 +2,7 @@ import { OutputModuleBase, ModuleConfig } from '../../core/OutputModuleBase';
 import manifest from './manifest.json';
 
 export class DmxOutputModule extends OutputModuleBase {
+  static manifest = manifest;
   constructor(config: ModuleConfig, log: (msg: string, level?: string) => void) {
     super(config, manifest, log);
   }

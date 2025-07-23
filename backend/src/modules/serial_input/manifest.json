@@ -1,8 +1,6 @@
 {
   "name": "Serial Input",
   "type": "input",
-  "classification": "trigger",
-  "mode": "trigger",
   "description": "Receive triggers from serial devices.",
   "fields": [
     { "name": "port", "type": "text", "label": "Serial Port", "default": "" },
