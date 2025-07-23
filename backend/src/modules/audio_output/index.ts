@@ -4,8 +4,9 @@ import { OutputModuleBase, ModuleConfig } from '../../core/OutputModuleBase';
 import manifest from './manifest.json';
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn } from 'child_process';
 import * as pureimage from 'pureimage';
+// @ts-ignore: speaker has no types
+import Speaker from 'speaker';
 
 const WAVEFORM_IMAGE_DIR = path.join(__dirname, 'assets', 'image');
 if (!fs.existsSync(WAVEFORM_IMAGE_DIR)) {
@@ -50,7 +51,6 @@ export class AudioOutputModule extends OutputModuleBase {
 
   manualTrigger() {
     this.log('Manual trigger received', 'Audio');
-    // Resolve the full path to the audio file
     const fullPath = path.join(__dirname, 'assets', 'audio', this.config.file_path);
     this.log('Playing audio file: ' + fullPath, 'Audio');
     this.playAudio(fullPath, this.getCurrentVolume());
@@ -61,20 +61,46 @@ export class AudioOutputModule extends OutputModuleBase {
     this.log(`Master volume set to ${this.masterVolume}`, 'Audio');
   }
 
-  playAudio(filePath: string, volume: number) {
+  async playAudio(filePath: string, volume: number) {
     if (!filePath || !fs.existsSync(filePath)) {
       this.log('Audio file not found: ' + filePath, 'Audio');
       return;
     }
-    // Use ffplay for playback with volume control
-    const ffplay = spawn('ffplay', ['-nodisp', '-autoexit', '-volume', String(volume), filePath], {
-      stdio: 'ignore',
-      detached: true
-    });
-    ffplay.on('error', (err) => {
-      this.log('ffplay error: ' + err, 'Audio');
-    });
-    ffplay.unref();
+    try {
+      const buffer = fs.readFileSync(filePath);
+      const audioData = await wav.decode(buffer);
+      const channelData = audioData.channelData;
+      const numChannels = channelData.length;
+      const sampleRate = audioData.sampleRate;
+      const bitDepth = 16; // Speaker expects 16-bit PCM
+      const length = channelData[0].length;
+      // Prepare interleaved PCM buffer
+      const pcmBuffer = Buffer.alloc(length * numChannels * 2); // 2 bytes per sample
+      const vol = Math.max(0, Math.min(100, volume)) / 100;
+      for (let i = 0; i < length; i++) {
+        for (let ch = 0; ch < numChannels; ch++) {
+          // Clamp and scale sample
+          let sample = channelData[ch][i] * vol;
+          sample = Math.max(-1, Math.min(1, sample));
+          const intSample = Math.floor(sample * 32767);
+          pcmBuffer.writeInt16LE(intSample, (i * numChannels + ch) * 2);
+        }
+      }
+      const speaker = new Speaker({
+        channels: numChannels,
+        bitDepth,
+        sampleRate,
+      });
+      speaker.on('error', (err: any) => {
+        this.log('Speaker error: ' + err, 'Audio');
+      });
+      // Play the buffer (overlap supported)
+      speaker.write(pcmBuffer);
+      speaker.end();
+      this.log('Audio playback started', 'Audio');
+    } catch (err) {
+      this.log('Audio playback error: ' + err, 'Audio');
+    }
   }
 
   public async generateWaveform(filePath: string) {

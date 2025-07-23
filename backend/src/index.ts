@@ -534,4 +534,5 @@ if (!fs.existsSync(distImageDir)) fs.mkdirSync(distImageDir, { recursive: true }
 
 server.listen(PORT, HOST, () => {
   logger.log(`Server started on http://${HOST}:${PORT}`, 'System');
+  console.log('=== Backend server ready and listening on port', PORT, '===');
 }); 

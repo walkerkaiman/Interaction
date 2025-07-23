@@ -17,6 +17,21 @@
           "volume": 77
         }
       }
+    },
+    {
+      "input": {
+        "module": "time_input",
+        "config": {
+          "target_time": "08:00:00"
+        }
+      },
+      "output": {
+        "module": "audio_output",
+        "config": {
+          "file_path": "Sweep.wav",
+          "volume": 16
+        }
+      }
     }
   ]
 }

@@ -4,7 +4,8 @@ import ModuleSettingsForm from '../components/ModuleSettingsForm';
 import { useModulesStore } from '../state/useModulesStore';
 import DeleteIcon from '@mui/icons-material/Delete';
 import IconButton from '@mui/material/IconButton';
-import ReactFlow, { Background, Controls, MiniMap, Node, Edge, Handle, Position, NodeProps } from 'react-flow-renderer';
+import ReactFlow, { Background, Controls, MiniMap, Handle, Position } from 'react-flow-renderer';
+import type { Node, Edge, NodeProps } from 'react-flow-renderer';
 import { useRef } from 'react';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 
@@ -41,24 +42,25 @@ function ModuleNode({ id, data }: NodeProps) {
   return (
     <div style={{ minWidth: 180, padding: 8, border: '2px solid #fff', borderRadius: 6, background: '#222', position: 'relative' }}>
       <div style={{ whiteSpace: 'pre-line', fontSize: 13, color: '#fff' }}>{data.label}</div>
-      {isAudioOutput && (
+      {/* Icon row: play (if audio) and delete, aligned top right */}
+      <div style={{ position: 'absolute', top: 2, right: 2, display: 'flex', gap: 4 }}>
+        {isAudioOutput && (
+          <IconButton
+            size="small"
+            color="primary"
+            onClick={handlePlay}
+          >
+            <PlayArrowIcon fontSize="small" />
+          </IconButton>
+        )}
         <IconButton
           size="small"
-          color="primary"
-          style={{ position: 'absolute', top: 2, left: 2 }}
-          onClick={handlePlay}
+          color="error"
+          onClick={() => data.onDelete(id)}
         >
-          <PlayArrowIcon fontSize="small" />
+          <DeleteIcon fontSize="small" />
         </IconButton>
-      )}
-      <IconButton
-        size="small"
-        color="error"
-        style={{ position: 'absolute', top: 2, right: 2 }}
-        onClick={() => data.onDelete(id)}
-      >
-        <DeleteIcon fontSize="small" />
-      </IconButton>
+      </div>
       <Handle type="target" position={Position.Left} style={{ background: '#fff' }} isConnectable={false} />
       <Handle type="source" position={Position.Right} style={{ background: '#fff' }} isConnectable={false} />
     </div>

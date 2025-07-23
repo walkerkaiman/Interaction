@@ -118,82 +118,50 @@
         
         <div class="status-text" id="statusText">Starting backend server...</div>
         <div class="details" id="details">Please wait while the system initializes</div>
+        <pre id="logArea" style="background:rgba(0,0,0,0.3);color:#baffc9;padding:1em;margin-top:1em;max-height:200px;overflow:auto;font-size:0.9em;border-radius:6px;"></pre>
     </div>
 
     <script>
-        let progress = 0;
-        let statusMessages = [
-            'Starting backend server...',
-            'Loading modules...',
-            'Initializing WebSocket connections...',
-            'Preparing web interface...',
-            'System ready!'
-        ];
-        let currentStep = 0;
-        let serverReady = false;
-
         const progressFill = document.getElementById('progressFill');
         const statusText = document.getElementById('statusText');
         const details = document.getElementById('details');
+        const logArea = document.getElementById('logArea');
 
-        function updateProgress(percent, message, detail = '') {
-            progressFill.style.width = percent + '%';
-            statusText.textContent = message;
-            if (detail) {
-                details.textContent = detail;
+        // Connect to WebSocket for real-time logs
+        const ws = new WebSocket('ws://localhost:3000/logs');
+        ws.onopen = () => {
+            statusText.textContent = 'Connecting to build process...';
+        };
+        ws.onmessage = (event) => {
+            let msg = event.data;
+            if (msg === '__READY__') {
+                statusText.textContent = 'System ready!';
+                progressFill.style.width = '100%';
+                setTimeout(() => {
+                    window.location.href = `http://${window.location.hostname}:8000/`;
+                }, 1200);
+                return;
             }
-        }
-
-        function simulateProgress() {
-            if (currentStep < statusMessages.length - 1 && !serverReady) {
-                currentStep++;
-                const percent = Math.min((currentStep / (statusMessages.length - 1)) * 90, 90); // Cap at 90% until server is ready
-                updateProgress(percent, statusMessages[currentStep]);
+            // Show log lines
+            logArea.textContent += msg + '\n';
+            logArea.scrollTop = logArea.scrollHeight;
+            // Optionally update progress bar based on keywords
+            if (/error|fail/i.test(msg)) {
+                progressFill.style.background = 'red';
+                statusText.textContent = 'Error during startup';
+            } else if (/ready|listening|compiled|started|success/i.test(msg)) {
+                progressFill.style.width = '90%';
+                statusText.textContent = 'Almost ready...';
+            } else {
+                progressFill.style.width = '60%';
             }
-        }
-
-        // Simulate initial progress
-        setTimeout(() => simulateProgress(), 1000);
-        setTimeout(() => simulateProgress(), 2000);
-        setTimeout(() => simulateProgress(), 3000);
-
-        // Check server status
-        function checkServerStatus() {
-            fetch('http://localhost:8000/api/status')
-                .then(response => {
-                    if (response.ok) {
-                        return response.json();
-                    } else {
-                        throw new Error('Server not ready');
-                    }
-                })
-                .then(data => {
-                    if (data.status === 'ready') {
-                        serverReady = true;
-                        updateProgress(100, 'System ready!', `Loaded ${data.modules} modules and ${data.interactions} interactions`);
-                        setTimeout(() => {
-                            window.location.href = 'http://localhost:8000/';
-                        }, 1500);
-                    } else {
-                        throw new Error('Server not ready');
-                    }
-                })
-                .catch(error => {
-                    // Server not ready yet, keep checking
-                    setTimeout(checkServerStatus, 1000);
-                });
-        }
-
-        // Start checking server status after initial delay
-        setTimeout(checkServerStatus, 4000);
-
-        // Fallback: if server doesn't respond within 30 seconds, show error
-        setTimeout(() => {
-            if (progress < 100) {
-                updateProgress(100, 'Connection timeout', 'Please check if the server is running and try refreshing the page');
-                statusText.classList.add('pulse');
-            }
-        }, 30000);
+        };
+        ws.onerror = () => {
+            statusText.textContent = 'WebSocket connection error';
+        };
+        ws.onclose = () => {
+            statusText.textContent = 'Connection closed';
+        };
     </script>
 </body>
 </html> 
