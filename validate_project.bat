@@ -109,6 +109,25 @@ if not exist "backend\node_modules\multer" (
     echo [OK] multer dependency exists
 )
 
+REM Check for required API endpoints
+echo.
+echo Checking API endpoints...
+
+powershell -Command "try { (Invoke-WebRequest -Uri 'http://localhost:8000/api/status' -TimeoutSec 3).StatusCode } catch { exit 1 }" >nul 2>&1
+if errorlevel 1 (
+    echo [WARNING] Backend server not running - cannot check API endpoints
+    echo           Start the server first to validate API endpoints
+) else (
+    echo [OK] Backend server is running
+    
+    powershell -Command "try { (Invoke-WebRequest -Uri 'http://localhost:8000/api/log_levels' -TimeoutSec 3).StatusCode } catch { exit 1 }" >nul 2>&1
+    if errorlevel 1 (
+        echo [WARNING] /api/log_levels endpoint not found - Console page may not work
+    ) else (
+        echo [OK] /api/log_levels endpoint working
+    )
+)
+
 REM Check frontend build
 echo.
 echo Checking frontend build...

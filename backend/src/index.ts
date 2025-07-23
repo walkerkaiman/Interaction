@@ -88,6 +88,20 @@ app.get('/api/status', (req, res) => {
   });
 });
 
+app.get('/api/log_levels', (req, res) => {
+  res.json([
+    'Error',
+    'System', 
+    'Audio',
+    'DMX',
+    'Frames',
+    'OSC',
+    'Serial',
+    'Time',
+    'Performance'
+  ]);
+});
+
 app.get('/api/system_info', async (req, res) => {
   try {
     const info = await getSystemInfo();
