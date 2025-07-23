@@ -5,55 +5,31 @@
       "input": {
         "module": "time_input",
         "config": {
-          "target_time": "10:00:00"
+          "target_time": "09:00:00"
         }
       },
       "output": {
         "module": "audio_output",
         "config": {
           "file_path": "Sweep.wav",
-          "volume": 74
+          "volume": 59
         }
       }
     },
     {
       "input": {
-        "module": "frames_input",
+        "module": "serial_input",
         "config": {
-          "mode": "trigger",
-          "threshold_value": 127,
-          "comparison_operator": "="
+          "port": "COM3",
+          "baud_rate": 9600,
+          "trigger_condition": "4"
         }
       },
       "output": {
         "module": "audio_output",
         "config": {
-          "file_path": "Arcade.wav",
-          "volume": 41
-        }
-      }
-    },
-    {
-      "input": {
-        "module": "time_input",
-        "config": {}
-      },
-      "output": {
-        "module": "audio_output",
-        "config": {}
-      }
-    },
-    {
-      "input": {
-        "module": "time_input",
-        "config": {
-          "target_time": "08:00:00"
-        }
-      },
-      "output": {
-        "module": "audio_output",
-        "config": {
-          "file_path": "Arcade.wav"
+          "file_path": "Sweep.wav",
+          "volume": 59
         }
       }
     },
@@ -61,15 +37,14 @@
       "input": {
         "module": "time_input",
         "config": {
-          "target_time": "10:00:00"
+          "target_time": "09:00:00"
         }
       },
       "output": {
-        "module": "osc_output",
+        "module": "audio_output",
         "config": {
-          "ip_address": "192.168.5.5",
-          "port": 8000,
-          "address": "/hi"
+          "file_path": "Sweep.wav",
+          "volume": 89
         }
       }
     }

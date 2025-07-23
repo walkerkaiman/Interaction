@@ -2,8 +2,95 @@ import { useState, useEffect } from 'react';
 import { Box, Button, Typography, Paper, Select, MenuItem, FormControl, InputLabel, Snackbar, Alert, Divider } from '@mui/material';
 import ModuleSettingsForm from '../components/ModuleSettingsForm';
 import { useModulesStore } from '../state/useModulesStore';
+import DeleteIcon from '@mui/icons-material/Delete';
+import IconButton from '@mui/material/IconButton';
+import ReactFlow, { Background, Controls, MiniMap, Node, Edge, Handle, Position, NodeProps } from 'react-flow-renderer';
+import { useRef } from 'react';
 
 const INTERACTION_DRAFT_KEY = 'interactionDraft';
+
+function buildNodeLabel(module: string, config: any) {
+  let label = module;
+  if (config && typeof config === 'object') {
+    for (const [key, value] of Object.entries(config)) {
+      label += `\n${key}: ${String(value)}`;
+    }
+  }
+  return label;
+}
+
+// Custom node with trash can
+function ModuleNode({ id, data }: NodeProps) {
+  return (
+    <div style={{ minWidth: 180, padding: 8, border: '1px solid #888', borderRadius: 6, background: '#fff', position: 'relative' }}>
+      <div style={{ whiteSpace: 'pre-line', fontSize: 13 }}>{data.label}</div>
+      <IconButton
+        size="small"
+        color="error"
+        style={{ position: 'absolute', top: 2, right: 2 }}
+        onClick={() => data.onDelete(id)}
+      >
+        <DeleteIcon fontSize="small" />
+      </IconButton>
+      <Handle type="target" position={Position.Left} style={{ background: '#1976d2' }} />
+      <Handle type="source" position={Position.Right} style={{ background: '#1976d2' }} />
+    </div>
+  );
+}
+
+function InteractionsGraph({ interactions, onDeleteModule }: { interactions: any[], onDeleteModule: (nodeId: string) => void }) {
+  // Build unique nodes and edges
+  const nodesMap = new Map<string, Node>();
+  const edges: Edge[] = [];
+  interactions.forEach((interaction, idx) => {
+    const inputId = `input-${interaction.input.module}-${JSON.stringify(interaction.input.config)}`;
+    const outputId = `output-${interaction.output.module}-${JSON.stringify(interaction.output.config)}`;
+    if (!nodesMap.has(inputId)) {
+      nodesMap.set(inputId, {
+        id: inputId,
+        type: 'moduleNode',
+        data: {
+          label: buildNodeLabel(interaction.input.module, interaction.input.config),
+          onDelete: onDeleteModule,
+        },
+        position: { x: 100, y: 100 + nodesMap.size * 100 },
+      });
+    }
+    if (!nodesMap.has(outputId)) {
+      nodesMap.set(outputId, {
+        id: outputId,
+        type: 'moduleNode',
+        data: {
+          label: buildNodeLabel(interaction.output.module, interaction.output.config),
+          onDelete: onDeleteModule,
+        },
+        position: { x: 400, y: 100 + nodesMap.size * 100 },
+      });
+    }
+    edges.push({
+      id: `e-${inputId}-${outputId}`,
+      source: inputId,
+      target: outputId,
+      animated: true,
+      style: { stroke: '#1976d2', strokeWidth: 2 },
+    });
+  });
+  const nodes = Array.from(nodesMap.values());
+  return (
+    <div style={{ height: 400, width: '100%' }}>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        fitView
+        nodeTypes={{ moduleNode: ModuleNode }}
+      >
+        <MiniMap />
+        <Controls />
+        <Background />
+      </ReactFlow>
+    </div>
+  );
+}
 
 const Interactions = () => {
   // Load draft from localStorage if present
@@ -124,6 +211,44 @@ const Interactions = () => {
     }
   };
 
+  const handleDeleteInteraction = async (interaction: any) => {
+    if (!window.confirm('Are you sure you want to delete this interaction?')) return;
+    try {
+      const res = await fetch('/api/interactions/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(interaction),
+      });
+      if (!res.ok) throw new Error('Failed to delete interaction');
+      setSnackbar({ open: true, message: 'Interaction deleted!', severity: 'success' });
+      fetchInteractions();
+    } catch (err: any) {
+      setSnackbar({ open: true, message: err.message || 'Error', severity: 'error' });
+    }
+  };
+
+  const handleDeleteModule = async (nodeId: string) => {
+    // Find the module name and config from the nodeId
+    const match = nodeId.match(/^(input|output)-(.+?)-({.*})$/);
+    if (!match) return;
+    const [, type, module, configStr] = match;
+    let config;
+    try { config = JSON.parse(configStr); } catch { return; }
+    // Find all interactions that use this module/config
+    const toDelete = interactions.filter(interaction =>
+      (interaction.input.module === module && JSON.stringify(interaction.input.config) === JSON.stringify(config)) ||
+      (interaction.output.module === module && JSON.stringify(interaction.output.config) === JSON.stringify(config))
+    );
+    for (const interaction of toDelete) {
+      await fetch('/api/interactions/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(interaction),
+      });
+    }
+    fetchInteractions();
+  };
+
   return (
     <Box sx={{ p: 2 }}>
       <Typography variant="h4" gutterBottom>Interactions</Typography>
@@ -210,24 +335,8 @@ const Interactions = () => {
       </Snackbar>
       <Divider sx={{ my: 3 }} />
       <Typography variant="h5" gutterBottom>Existing Interactions</Typography>
-      {interactions.length === 0 ? (
-        <Typography color="text.secondary">No interactions registered.</Typography>
-      ) : (
-        interactions.map((interaction, idx) => (
-          <Paper key={idx} sx={{ p: 2, mb: 2 }}>
-            <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 3 }}>
-              <Box sx={{ flex: 1 }}>
-                <Typography variant="subtitle1">Input: {interaction.input.module}</Typography>
-                <pre style={{ fontSize: 13, background: '#222', color: '#fff', padding: 8, borderRadius: 4 }}>{JSON.stringify(interaction.input.config, null, 2)}</pre>
-              </Box>
-              <Box sx={{ flex: 1 }}>
-                <Typography variant="subtitle1">Output: {interaction.output.module}</Typography>
-                <pre style={{ fontSize: 13, background: '#222', color: '#fff', padding: 8, borderRadius: 4 }}>{JSON.stringify(interaction.output.config, null, 2)}</pre>
-              </Box>
-            </Box>
-          </Paper>
-        ))
-      )}
+      {/* Replace the list with the dynamic graph */}
+      <InteractionsGraph interactions={interactions} onDeleteModule={handleDeleteModule} />
     </Box>
   );
 };
