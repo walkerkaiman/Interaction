@@ -38,17 +38,22 @@ export class AudioOutputModule extends OutputModuleBase {
 
   onTriggerEvent(event: any) {
     this.log(`AudioOutputModule trigger event: ${JSON.stringify(event)}`, 'Audio');
-    this.playAudio(this.config.file_path, this.getCurrentVolume());
+    const fullPath = path.join(__dirname, 'assets', 'audio', this.config.file_path);
+    this.playAudio(fullPath, this.getCurrentVolume());
   }
 
   onStreamingEvent(event: any) {
     this.log(`AudioOutputModule streaming event: ${JSON.stringify(event)}`, 'Audio');
-    this.playAudio(this.config.file_path, this.getCurrentVolume());
+    const fullPath = path.join(__dirname, 'assets', 'audio', this.config.file_path);
+    this.playAudio(fullPath, this.getCurrentVolume());
   }
 
   manualTrigger() {
     this.log('Manual trigger received', 'Audio');
-    this.playAudio(this.config.file_path, this.getCurrentVolume());
+    // Resolve the full path to the audio file
+    const fullPath = path.join(__dirname, 'assets', 'audio', this.config.file_path);
+    this.log('Playing audio file: ' + fullPath, 'Audio');
+    this.playAudio(fullPath, this.getCurrentVolume());
   }
 
   setMasterVolume(vol: number) {

@@ -3,48 +3,18 @@
   "interactions": [
     {
       "input": {
-        "module": "time_input",
-        "config": {
-          "target_time": "09:00:00"
-        }
-      },
-      "output": {
-        "module": "audio_output",
-        "config": {
-          "file_path": "Sweep.wav",
-          "volume": 59
-        }
-      }
-    },
-    {
-      "input": {
         "module": "serial_input",
         "config": {
           "port": "COM3",
           "baud_rate": 9600,
-          "trigger_condition": "4"
+          "trigger_condition": "127"
         }
       },
       "output": {
         "module": "audio_output",
         "config": {
           "file_path": "Sweep.wav",
-          "volume": 59
-        }
-      }
-    },
-    {
-      "input": {
-        "module": "time_input",
-        "config": {
-          "target_time": "09:00:00"
-        }
-      },
-      "output": {
-        "module": "audio_output",
-        "config": {
-          "file_path": "Sweep.wav",
-          "volume": 89
+          "volume": 77
         }
       }
     }

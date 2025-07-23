@@ -6,6 +6,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import IconButton from '@mui/material/IconButton';
 import ReactFlow, { Background, Controls, MiniMap, Node, Edge, Handle, Position, NodeProps } from 'react-flow-renderer';
 import { useRef } from 'react';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 
 const INTERACTION_DRAFT_KEY = 'interactionDraft';
 
@@ -21,9 +22,35 @@ function buildNodeLabel(module: string, config: any) {
 
 // Custom node with trash can
 function ModuleNode({ id, data }: NodeProps) {
+  // Determine if this is an audio_output node
+  const isAudioOutput = data.label.startsWith('audio_output');
+  const handlePlay = async () => {
+    // Extract config from nodeId
+    const match = id.match(/^(input|output)-(.+?)-({.*})$/);
+    if (!match) return;
+    const [, , module, configStr] = match;
+    let config;
+    try { config = JSON.parse(configStr); } catch { return; }
+    console.log('[Audio]', 'Manual play triggered for:', config);
+    await fetch('/api/modules/audio_output/trigger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config }),
+    });
+  };
   return (
-    <div style={{ minWidth: 180, padding: 8, border: '1px solid #888', borderRadius: 6, background: '#fff', position: 'relative' }}>
-      <div style={{ whiteSpace: 'pre-line', fontSize: 13 }}>{data.label}</div>
+    <div style={{ minWidth: 180, padding: 8, border: '2px solid #fff', borderRadius: 6, background: '#222', position: 'relative' }}>
+      <div style={{ whiteSpace: 'pre-line', fontSize: 13, color: '#fff' }}>{data.label}</div>
+      {isAudioOutput && (
+        <IconButton
+          size="small"
+          color="primary"
+          style={{ position: 'absolute', top: 2, left: 2 }}
+          onClick={handlePlay}
+        >
+          <PlayArrowIcon fontSize="small" />
+        </IconButton>
+      )}
       <IconButton
         size="small"
         color="error"
@@ -32,8 +59,8 @@ function ModuleNode({ id, data }: NodeProps) {
       >
         <DeleteIcon fontSize="small" />
       </IconButton>
-      <Handle type="target" position={Position.Left} style={{ background: '#1976d2' }} />
-      <Handle type="source" position={Position.Right} style={{ background: '#1976d2' }} />
+      <Handle type="target" position={Position.Left} style={{ background: '#fff' }} isConnectable={false} />
+      <Handle type="source" position={Position.Right} style={{ background: '#fff' }} isConnectable={false} />
     </div>
   );
 }
@@ -84,7 +111,10 @@ function InteractionsGraph({ interactions, onDeleteModule }: { interactions: any
         fitView
         nodeTypes={{ moduleNode: ModuleNode }}
       >
-        <MiniMap />
+        <MiniMap
+          nodeColor={() => '#fff'}
+          style={{ background: '#000' }}
+        />
         <Controls />
         <Background />
       </ReactFlow>
@@ -334,7 +364,7 @@ const Interactions = () => {
         <Alert severity={snackbar.severity} sx={{ width: '100%' }}>{snackbar.message}</Alert>
       </Snackbar>
       <Divider sx={{ my: 3 }} />
-      <Typography variant="h5" gutterBottom>Existing Interactions</Typography>
+      <Typography variant="h5" gutterBottom>Interaction Map</Typography>
       {/* Replace the list with the dynamic graph */}
       <InteractionsGraph interactions={interactions} onDeleteModule={handleDeleteModule} />
     </Box>

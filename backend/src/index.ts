@@ -440,6 +440,33 @@ app.post('/api/audio_files', upload.single('file'), async (req: Request, res: Re
 
 // --- All API endpoints and audio file logic above this line ---
 
+function normalizeModuleName(name: string) {
+  return name.toLowerCase().replace(/ /g, '_');
+}
+// --- Manual trigger endpoint for all output modules ---
+app.post('/api/modules/:module/trigger', async (req: Request, res: Response) => {
+  const moduleName = req.params.module;
+  const config = req.body.config;
+  console.log('Trigger request:', moduleName, config);
+  const mod = modules.find(m => {
+    console.log('Comparing to:', m.getModuleName(), m.config);
+    return normalizeModuleName(m.getModuleName()) === normalizeModuleName(moduleName) && JSON.stringify(m.config) === JSON.stringify(config);
+  });
+  console.log('Found module:', mod ? 'YES' : 'NO');
+  if (!mod || typeof mod.manualTrigger !== 'function') {
+    console.log('Output module not found or cannot be triggered');
+    return res.status(404).json({ error: 'Output module not found or cannot be triggered' });
+  }
+  try {
+    await mod.manualTrigger();
+    console.log('manualTrigger called successfully');
+    res.json({ success: true });
+  } catch (err) {
+    console.error('manualTrigger error:', err);
+    res.status(500).json({ error: 'Failed to trigger output module' });
+  }
+});
+
 // --- Serve frontend static files (should be last!) ---
 const frontendDist = path.join(__dirname, '../../web-frontend/dist');
 
