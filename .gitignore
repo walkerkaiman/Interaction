@@ -3,13 +3,13 @@ node_modules/
 .env
 .env.*
 
-# Prevent root-level package files (should only exist in backend/ and web-frontend/)
+# Prevent root-level package files (should only exist in backend/ and frontend/)
 package.json
 package-lock.json
 
 # Build output
 /dist/
-web-frontend/dist/
+frontend/dist/
 backend/dist/
 
 # Logs
@@ -32,7 +32,7 @@ Thumbs.db
 .venv/
 
 # Misc
-web-frontend/node_modules/
+frontend/node_modules/
 backend/node_modules/
-web-frontend/.env
+frontend/.env
 backend/.env

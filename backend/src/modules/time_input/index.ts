@@ -1,5 +1,5 @@
 import { InputModuleBase, ModuleConfig } from '../../core/InputModuleBase';
-import manifest from './manifest.json';
+import manifest from '../../../../shared/manifests/time_input.json';
 
 export class TimeInputModule extends InputModuleBase {
   static manifest = manifest;

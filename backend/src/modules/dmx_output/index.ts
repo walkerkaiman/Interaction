@@ -1,5 +1,5 @@
 import { OutputModuleBase, ModuleConfig } from '../../core/OutputModuleBase';
-import manifest from './manifest.json';
+import manifest from '../../../../shared/manifests/dmx_output.json';
 
 export class DmxOutputModule extends OutputModuleBase {
   static manifest = manifest;

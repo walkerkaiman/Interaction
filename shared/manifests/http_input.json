@@ -1,0 +1,12 @@
+{
+  "name": "HTTP Input",
+  "type": "input",
+  "description": "Triggers an event when an HTTP request is received.",
+  "fields": [
+    { "name": "port", "type": "number", "label": "Listen Port", "default": 9000 },
+    { "name": "path", "type": "text", "label": "Path", "default": "/trigger" },
+    { "name": "method", "type": "select", "label": "HTTP Method", "options": ["POST", "GET"], "default": "POST" },
+    { "name": "expected_body", "type": "text", "label": "Expected Body (optional)", "default": "" },
+    { "name": "response", "type": "text", "label": "Response (optional)", "default": "OK" }
+  ]
+} 

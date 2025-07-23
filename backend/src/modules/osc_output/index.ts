@@ -1,5 +1,5 @@
 import { OutputModuleBase, ModuleConfig } from '../../core/OutputModuleBase';
-import manifest from './manifest.json';
+import manifest from '../../../../shared/manifests/osc_output.json';
 
 export class OscOutputModule extends OutputModuleBase {
   static manifest = manifest;

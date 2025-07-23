@@ -76,7 +76,7 @@ function startProcesses() {
   });
 
   // 2. Build frontend
-  const frontendDir = path.join(__dirname, 'web-frontend');
+  const frontendDir = path.join(__dirname, 'frontend');
   const frontendBuild = spawn('npm', ['run', 'build'], { cwd: frontendDir, shell: true });
   frontendBuild.stdout.on('data', d => broadcast('[frontend build] ' + d.toString().trim()));
   frontendBuild.stderr.on('data', d => broadcast('[frontend build] ' + d.toString().trim()));
@@ -88,4 +88,12 @@ function startProcesses() {
     broadcast('[frontend build] done.');
     // Optionally, you can start the frontend dev server here if needed
   });
+
+  // Sync manifests before building frontend
+  const { execSync } = require('child_process');
+  try {
+    execSync('node ./config/sync_manifests.js', { stdio: 'inherit' });
+  } catch (e) {
+    console.error('Failed to sync manifests:', e);
+  }
 } 

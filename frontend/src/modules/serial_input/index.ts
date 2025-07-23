@@ -1,0 +1,1 @@
+import manifest from '../../../../shared/manifests/serial_input.json'; 

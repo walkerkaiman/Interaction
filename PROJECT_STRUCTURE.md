@@ -13,7 +13,7 @@ Interaction/
 │   ├── dist/               # Compiled JavaScript (auto-generated)
 │   ├── package.json        # Backend dependencies
 │   └── tsconfig.json       # TypeScript configuration
-├── web-frontend/           # React frontend
+├── frontend/           # React frontend
 │   ├── src/                # React source files
 │   ├── dist/               # Built frontend (auto-generated)
 │   └── package.json        # Frontend dependencies
@@ -21,6 +21,12 @@ Interaction/
 ├── loading.html            # Loading screen
 └── start_interaction.bat   # Main startup script
 ```
+
+## Shared Manifests
+
+All module manifests are now stored in `shared/manifests/` at the project root. Both backend and frontend modules import their manifest from this shared directory. There are no longer `manifest.json` files in individual backend or frontend module folders.
+
+To add or edit a module manifest, update the corresponding file in `shared/manifests/` (e.g., `shared/manifests/audio_output.json`).
 
 ## How to Run
 
@@ -43,7 +49,7 @@ npm run build
 npm start
 
 # Frontend (in another terminal)
-cd web-frontend
+cd frontend
 npm install
 npm run build
 ```
@@ -53,11 +59,11 @@ npm run build
 ### File Locations
 - **Main server file**: `backend/src/index.ts` (NOT `backend/index.ts`)
 - **TypeScript config**: `backend/tsconfig.json` (compiles `src/` to `dist/`)
-- **Frontend build**: `web-frontend/dist/` (served by backend)
+- **Frontend build**: `frontend/dist/` (served by backend)
 
 ### Dependencies
 - Backend dependencies are in `backend/package.json`
-- Frontend dependencies are in `web-frontend/package.json`
+- Frontend dependencies are in `frontend/package.json`
 - **No root-level package.json needed**
 
 ### Ports

@@ -3,33 +3,14 @@
   "interactions": [
     {
       "input": {
-        "module": "serial_input",
-        "config": {
-          "port": "COM3",
-          "baud_rate": 9600,
-          "trigger_condition": "127"
-        }
-      },
-      "output": {
-        "module": "audio_output",
-        "config": {
-          "file_path": "Sweep.wav",
-          "volume": 77
-        }
-      }
-    },
-    {
-      "input": {
         "module": "time_input",
-        "config": {
-          "target_time": "08:00:00"
-        }
+        "config": {}
       },
       "output": {
         "module": "audio_output",
         "config": {
           "file_path": "Sweep.wav",
-          "volume": 16
+          "volume": 67
         }
       }
     }

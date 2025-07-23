@@ -16,11 +16,11 @@ if not exist "backend\" (
     echo [OK] backend/ directory exists
 )
 
-if not exist "web-frontend\" (
-    echo [ERROR] web-frontend/ directory not found
+if not exist "frontend\" (
+    echo [ERROR] frontend/ directory not found
     set /a errors+=1
 ) else (
-    echo [OK] web-frontend/ directory exists
+    echo [OK] frontend/ directory exists
 )
 
 if not exist "config\" (
@@ -48,11 +48,11 @@ if not exist "backend\package.json" (
     echo [OK] backend\package.json exists
 )
 
-if not exist "web-frontend\package.json" (
-    echo [ERROR] web-frontend\package.json not found
+if not exist "frontend\package.json" (
+    echo [ERROR] frontend\package.json not found
     set /a errors+=1
 ) else (
-    echo [OK] web-frontend\package.json exists
+    echo [OK] frontend\package.json exists
 )
 
 if not exist "loading.html" (
@@ -75,7 +75,7 @@ echo Checking for unwanted files...
 
 if exist "package.json" (
     echo [WARNING] Root-level package.json found - this should not exist
-    echo           Dependencies should be in backend/package.json and web-frontend/package.json
+    echo           Dependencies should be in backend/package.json and frontend/package.json
 )
 
 if exist "package-lock.json" (
@@ -84,7 +84,7 @@ if exist "package-lock.json" (
 
 if exist "node_modules" (
     echo [WARNING] Root-level node_modules/ found - this should not exist
-    echo           Node modules should be in backend/node_modules/ and web-frontend/node_modules/
+    echo           Node modules should be in backend/node_modules/ and frontend/node_modules/
 )
 
 REM Check backend build
@@ -132,19 +132,19 @@ REM Check frontend build
 echo.
 echo Checking frontend build...
 
-if not exist "web-frontend\dist\index.html" (
-    echo [WARNING] web-frontend\dist\index.html not found - frontend needs to be built
-    echo           Run: cd web-frontend && npm run build
+if not exist "frontend\dist\index.html" (
+    echo [WARNING] frontend\dist\index.html not found - frontend needs to be built
+    echo           Run: cd frontend && npm run build
 ) else (
-    echo [OK] web-frontend\dist\index.html exists
+    echo [OK] frontend\dist\index.html exists
 )
 
 REM Check for build configuration issues
 echo.
 echo Checking build configurations...
 
-if exist "web-frontend\package.json" (
-    findstr /C:"tsc -b" "web-frontend\package.json" >nul 2>&1
+if exist "frontend\package.json" (
+    findstr /C:"tsc -b" "frontend\package.json" >nul 2>&1
     if not errorlevel 1 (
         echo [WARNING] Frontend package.json contains 'tsc -b' which may cause build issues
         echo           Consider using 'vite build' instead

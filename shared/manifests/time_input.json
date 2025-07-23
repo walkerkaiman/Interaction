@@ -1,0 +1,8 @@
+{
+  "name": "Time Input",
+  "type": "input",
+  "description": "Time-based triggers and countdown timers.",
+  "fields": [
+    { "name": "target_time", "type": "time", "label": "Target Time", "default": "12:00:00" }
+  ]
+} 

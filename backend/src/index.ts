@@ -134,7 +134,7 @@ app.get('/api/services', async (req, res) => {
 });
 
 app.get('/api/module_wikis', (req: Request, res: Response) => {
-  const wikiDir = path.join(__dirname, '../../web-frontend/module_wikis');
+  const wikiDir = path.join(__dirname, '../../frontend/module_wikis');
   fs.readdir(wikiDir, (err, files) => {
     if (err) return res.status(500).json({ error: 'Failed to read wiki directory' });
     const mdFiles = files.filter(f => f.endsWith('.md'));
@@ -468,7 +468,7 @@ app.post('/api/modules/:module/trigger', async (req: Request, res: Response) => 
 });
 
 // --- Serve frontend static files (should be last!) ---
-const frontendDist = path.join(__dirname, '../../web-frontend/dist');
+const frontendDist = path.join(__dirname, '../../frontend/dist');
 
 // SPA fallback: serve index.html for any non-API route
 app.get('*', (req: Request, res: Response) => {

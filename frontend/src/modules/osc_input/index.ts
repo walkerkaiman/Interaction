@@ -1,0 +1,1 @@
+import manifest from '../../../../shared/manifests/osc_input.json'; 

@@ -1,5 +1,5 @@
 import { InputModuleBase, ModuleConfig } from '../../core/InputModuleBase';
-import manifest from './manifest.json';
+import manifest from '../../../../shared/manifests/frames_input.json';
 
 export class FramesInputModule extends InputModuleBase {
   constructor(config: ModuleConfig, log: (msg: string, level?: string) => void) {

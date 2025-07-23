@@ -1,7 +1,7 @@
 // @ts-ignore: wav-decoder has no types
 import * as wav from 'wav-decoder';
 import { OutputModuleBase, ModuleConfig } from '../../core/OutputModuleBase';
-import manifest from './manifest.json';
+import manifest from '../../../../shared/manifests/audio_output.json';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as pureimage from 'pureimage';
@@ -38,22 +38,27 @@ export class AudioOutputModule extends OutputModuleBase {
   protected async onHandleEvent(event: any): Promise<void> {}
 
   onTriggerEvent(event: any) {
-    this.log(`AudioOutputModule trigger event: ${JSON.stringify(event)}`, 'Audio');
     const fullPath = path.join(__dirname, 'assets', 'audio', this.config.file_path);
-    this.playAudio(fullPath, this.getCurrentVolume());
+    this.playAudio(fullPath, this.getCurrentVolume(), {
+      triggerSource: event?.sourceModule || 'input',
+      event,
+    });
   }
 
   onStreamingEvent(event: any) {
-    this.log(`AudioOutputModule streaming event: ${JSON.stringify(event)}`, 'Audio');
     const fullPath = path.join(__dirname, 'assets', 'audio', this.config.file_path);
-    this.playAudio(fullPath, this.getCurrentVolume());
+    this.playAudio(fullPath, this.getCurrentVolume(), {
+      triggerSource: event?.sourceModule || 'input',
+      event,
+    });
   }
 
   manualTrigger() {
-    this.log('Manual trigger received', 'Audio');
     const fullPath = path.join(__dirname, 'assets', 'audio', this.config.file_path);
-    this.log('Playing audio file: ' + fullPath, 'Audio');
-    this.playAudio(fullPath, this.getCurrentVolume());
+    this.playAudio(fullPath, this.getCurrentVolume(), {
+      triggerSource: 'manual',
+      event: null,
+    });
   }
 
   setMasterVolume(vol: number) {
@@ -61,11 +66,17 @@ export class AudioOutputModule extends OutputModuleBase {
     this.log(`Master volume set to ${this.masterVolume}`, 'Audio');
   }
 
-  async playAudio(filePath: string, volume: number) {
+  async playAudio(filePath: string, volume: number, options?: { triggerSource: string, event: any }) {
     if (!filePath || !fs.existsSync(filePath)) {
       this.log('Audio file not found: ' + filePath, 'Audio');
       return;
     }
+    const triggerSource = options?.triggerSource || 'unknown';
+    const eventInfo = options?.event ? JSON.stringify(options.event) : '';
+    this.log(
+      `[Audio Triggered] Source: ${triggerSource} | File: ${path.basename(filePath)} | Volume: ${volume} | Settings: ${JSON.stringify(this.config)}${eventInfo ? ' | Event: ' + eventInfo : ''}`,
+      'Audio'
+    );
     try {
       const buffer = fs.readFileSync(filePath);
       const audioData = await wav.decode(buffer);

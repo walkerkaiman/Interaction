@@ -1,0 +1,12 @@
+{
+  "name": "HTTP Output",
+  "type": "output",
+  "description": "Sends an HTTP request when triggered.",
+  "fields": [
+    { "name": "method", "type": "select", "label": "HTTP Method", "options": ["GET", "POST", "PUT", "DELETE", "PATCH"], "default": "POST" },
+    { "name": "url", "type": "text", "label": "Request URL", "default": "" },
+    { "name": "headers", "type": "json", "label": "Headers (JSON)", "default": "{}" },
+    { "name": "body", "type": "text", "label": "Body (for POST/PUT/PATCH)", "default": "" },
+    { "name": "timeout", "type": "number", "label": "Timeout (ms)", "default": 5000 }
+  ]
+} 

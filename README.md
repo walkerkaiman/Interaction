@@ -40,7 +40,7 @@ A modular, real-time framework for interactive art installations, built with **T
    cd ..
 
    # Frontend
-   cd web-frontend
+   cd frontend
    npm install
    cd ..
    ```
@@ -172,7 +172,7 @@ backend/src/modules/my_module/
 
 ## Troubleshooting
 
-- **UI not loading:** Make sure you’ve built the frontend (`npm run build` in `web-frontend`) and restarted the backend.
+- **UI not loading:** Make sure you’ve built the frontend (`npm run build` in `frontend`) and restarted the backend.
 - **Port in use:** Change the port in backend or stop other services.
 - **Logs not showing:** Ensure WebSocket is connected (check browser console).
 - **Performance stats missing:** Check that `systeminformation` is installed in backend.
@@ -209,3 +209,9 @@ MIT License. See [LICENSE](LICENSE) for details.
 ---
 
 For detailed module documentation, see the Wiki section in the web UI.
+
+## Shared Module Manifests
+
+All module manifests are now stored in `shared/manifests/` at the project root. Both backend and frontend modules import their manifest from this shared directory. There are no longer `manifest.json` files in individual backend or frontend module folders.
+
+To add or edit a module manifest, update the corresponding file in `shared/manifests/` (e.g., `shared/manifests/audio_output.json`).
