@@ -45,7 +45,7 @@ function broadcast(msg) {
 
 server.listen(PORT, () => {
   console.log(`Loading screen available at http://localhost:${PORT}/loading.html`);
-  openBrowser(`http://localhost:${PORT}/loading.html`);
+  openBrowser(`http://localhost:${PORT}/loading.html`); // Disabled auto browser open
   startProcesses();
 });
 

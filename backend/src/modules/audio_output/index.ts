@@ -35,7 +35,24 @@ export class AudioOutputModule extends OutputModuleBase {
 
   protected async onStart(): Promise<void> {}
   protected async onStop(): Promise<void> {}
-  protected async onHandleEvent(event: any): Promise<void> {}
+  public async handleEvent(event: any): Promise<void> {
+    this.log(`[handleEvent] Received event: ${JSON.stringify(event)}`, 'System');
+    try {
+      if (event.mode === 'trigger') {
+        this.log(`[handleEvent] Trigger event detected, calling onTriggerEvent`, 'System');
+        this.onTriggerEvent(event);
+      } else {
+        this.log(`[handleEvent] Non-trigger event received, ignoring`, 'System');
+      }
+    } catch (err) {
+      this.log(`[handleEvent] Error handling event: ${err}`, 'Error');
+    }
+  }
+
+  public async onHandleEvent(event: any): Promise<void> {
+    // No-op, required by OutputModuleBase. Optionally log if desired.
+    this.log(`[onHandleEvent] Called with event: ${JSON.stringify(event)}`, 'System');
+  }
 
   onTriggerEvent(event: any) {
     const fullPath = path.join(__dirname, 'assets', 'audio', this.config.file_path);
@@ -67,8 +84,9 @@ export class AudioOutputModule extends OutputModuleBase {
   }
 
   async playAudio(filePath: string, volume: number, options?: { triggerSource: string, event: any }) {
+    this.log(`[System] Checking for file at: ${filePath}`, 'System');
     if (!filePath || !fs.existsSync(filePath)) {
-      this.log('Audio file not found: ' + filePath, 'Audio');
+      this.log(`Audio file not found: ${this.config.file_path} (looked in: ${path.dirname(filePath)})`, 'Audio');
       return;
     }
     const triggerSource = options?.triggerSource || 'unknown';

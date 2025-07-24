@@ -68,41 +68,44 @@ export class TimeInputModule extends InputModuleBase {
     try {
       const now = new Date();
       const timeParts = targetTime.split(':').map(Number);
-      
+      // If any part is NaN, treat as invalid
+      if (timeParts.some(isNaN)) {
+        throw new Error('Invalid time format');
+      }
       // Handle both HH:MM and HH:MM:SS formats
       const hours = timeParts[0] || 0;
       const minutes = timeParts[1] || 0;
       const seconds = timeParts[2] || 0;
-      
       // Create target time for today
       const target = new Date();
       target.setHours(hours, minutes, seconds, 0);
-
       // If target time has passed today, set it for tomorrow
       if (target <= now) {
         target.setDate(target.getDate() + 1);
       }
-
       const diff = target.getTime() - now.getTime();
       const totalSeconds = Math.floor(diff / 1000);
-      
       if (totalSeconds <= 0) {
+        this.log(`[System] Countdown reached zero, emitting trigger event`, 'System');
+        this.onTrigger({ type: 'trigger', source: this.getModuleName(), timestamp: now.toISOString() });
         return 'Time to trigger!';
       }
-
+      // If the countdown is exactly 24h 0m 0s, treat as trigger (for midnight edge case)
+      if (totalSeconds === 24 * 3600) {
+        this.log(`[System] Countdown reached zero (midnight edge), emitting trigger event`, 'System');
+        this.onTrigger({ type: 'trigger', source: this.getModuleName(), timestamp: now.toISOString() });
+        return 'Time to trigger!';
+      }
       const hoursLeft = Math.floor(totalSeconds / 3600);
       const minutesLeft = Math.floor((totalSeconds % 3600) / 60);
       const secondsLeft = totalSeconds % 60;
-
       const result = hoursLeft > 0 
         ? `${hoursLeft}h ${minutesLeft}m ${secondsLeft}s`
         : minutesLeft > 0 
           ? `${minutesLeft}m ${secondsLeft}s`
           : `${secondsLeft}s`;
-          
       // Debug logging
       this.log(`Countdown for ${targetTime}: ${result} (target: ${target.toISOString()}, now: ${now.toISOString()})`, 'Time');
-      
       return result;
     } catch (error) {
       this.log(`Error calculating countdown for ${targetTime}: ${error}`, 'Error');
@@ -125,8 +128,12 @@ export class TimeInputModule extends InputModuleBase {
   }
 
   onTrigger(event: any) {
-    this.log(`TimeInputModule trigger: ${JSON.stringify(event)}`, 'Time');
-    this.emitEvent(event);
+    this.log(`[System] TimeInputModule trigger: ${JSON.stringify(event)}`, 'System');
+    try {
+      this.emitEvent(event);
+    } catch (err) {
+      this.log(`[System] Error in onTrigger: ${err}`, 'Error');
+    }
   }
 
   onStream(value: any) {

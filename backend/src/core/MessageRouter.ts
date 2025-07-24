@@ -61,10 +61,24 @@ export class MessageRouter {
         );
         if (input && output) {
           this.connections.push({ input, output });
+          console.log(`[System] Registered interaction: ${interaction.input.module} → ${interaction.output.module}`);
         }
       }
+      console.log(`[System] MessageRouter connections rebuilt. Total: ${this.connections.length}`);
+      this.printConnections();
     } catch (err) {
-      console.error('Error in MessageRouter.rebuild:', err);
+      console.error('[Error] Error in MessageRouter.rebuild:', err);
+    }
+  }
+
+  printConnections() {
+    if (this.connections.length === 0) {
+      console.log('[System] No MessageRouter connections.');
+    } else {
+      console.log('[System] Current MessageRouter connections:');
+      this.connections.forEach((conn, idx) => {
+        console.log(`  [${idx}] ${conn.input.getModuleName()} (${JSON.stringify(conn.input.getConfig())}) → ${conn.output.getModuleName()} (${JSON.stringify(conn.output.getConfig())})`);
+      });
     }
   }
 
@@ -94,8 +108,11 @@ export class MessageRouter {
           conn.output.getModuleName() === interaction.output.module &&
           JSON.stringify(conn.output.getConfig()) === JSON.stringify(interaction.output.config))
       );
+      console.log(`[System] Removed interaction: ${interaction.input.module} → ${interaction.output.module}`);
+      console.log(`[System] MessageRouter connections after removal. Total: ${this.connections.length}`);
+      this.printConnections();
     } catch (err) {
-      console.error('Error in MessageRouter.removeInteraction:', err);
+      console.error('[Error] Error in MessageRouter.removeInteraction:', err);
     }
   }
 
@@ -103,20 +120,30 @@ export class MessageRouter {
     try {
       this.removeInteraction(oldInteraction);
       this.addInteraction(newInteraction, modules);
+      console.log(`[System] Updated interaction: ${oldInteraction.input.module} → ${oldInteraction.output.module} to ${newInteraction.input.module} → ${newInteraction.output.module}`);
+      console.log(`[System] MessageRouter connections after update. Total: ${this.connections.length}`);
+      this.printConnections();
     } catch (err) {
-      console.error('Error in MessageRouter.updateInteraction:', err);
+      console.error('[Error] Error in MessageRouter.updateInteraction:', err);
     }
   }
 
   routeEvent(fromModule: InputModuleBase, event: any, mode: 'trigger' | 'streaming') {
     try {
+      let routed = false;
+      console.log(`[System] Attempting to route event from ${fromModule.getModuleName()} with config ${JSON.stringify(fromModule.getConfig())}: ${JSON.stringify(event)}`);
       for (const conn of this.connections) {
         if (conn.input === fromModule) {
+          console.log(`[System] Routing event from ${fromModule.getModuleName()} to ${conn.output.getModuleName()}: ${JSON.stringify(event)}`);
           conn.output.handleEvent({ ...event, mode });
+          routed = true;
         }
       }
+      if (!routed) {
+        console.log(`[System] No connections found for event from ${fromModule.getModuleName()} with config ${JSON.stringify(fromModule.getConfig())}`);
+      }
     } catch (err) {
-      console.error('Error in MessageRouter.routeEvent:', err);
+      console.error('[Error] Error in MessageRouter.routeEvent:', err);
     }
   }
 

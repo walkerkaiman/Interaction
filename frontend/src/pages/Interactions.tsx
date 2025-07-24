@@ -203,6 +203,30 @@ function InteractionsGraph({ interactions, onDeleteModule }: { interactions: any
   );
 }
 
+// Add a helper to validate config against manifest fields
+function validateConfig(config: any, manifest: any): string[] {
+  const errors: string[] = [];
+  if (!manifest || !manifest.fields) return errors;
+  for (const field of manifest.fields) {
+    const value = config[field.name];
+    if (value === undefined || value === null || value === '') {
+      errors.push(`${field.label || field.name} is required`);
+      continue;
+    }
+    if (field.type === 'number' && isNaN(Number(value))) {
+      errors.push(`${field.label || field.name} must be a number`);
+    }
+    if (field.type === 'time') {
+      // Accept HH:MM or HH:MM:SS
+      if (!/^\d{1,2}:\d{2}(:\d{2})?$/.test(value)) {
+        errors.push(`${field.label || field.name} must be in HH:MM or HH:MM:SS format`);
+      }
+    }
+    // Add more type checks as needed
+  }
+  return errors;
+}
+
 const Interactions = () => {
   // Load draft from localStorage if present
   const draft = (() => {
@@ -300,6 +324,19 @@ const Interactions = () => {
 
   const handleRegister = async () => {
     setRegistering(true);
+    // Find manifests for input and output modules
+    const inputManifest = inputModules.find((m: any) => m.name === inputModuleName)?.manifest;
+    const outputManifest = outputModules.find((m: any) => m.name === outputModuleName)?.manifest;
+    const inputErrors = validateConfig(inputConfig, inputManifest);
+    const outputErrors = validateConfig(outputConfig, outputManifest);
+    if (inputErrors.length > 0 || outputErrors.length > 0) {
+      let message = '';
+      if (inputErrors.length > 0) message += `Input module (${inputManifest?.name || inputModuleName}):\n- ${inputErrors.join('\n- ')}\n`;
+      if (outputErrors.length > 0) message += `Output module (${outputManifest?.name || outputModuleName}):\n- ${outputErrors.join('\n- ')}`;
+      setSnackbar({ open: true, message, severity: 'error' });
+      setRegistering(false);
+      return;
+    }
     try {
       const res = await fetch('/api/interactions', {
         method: 'POST',

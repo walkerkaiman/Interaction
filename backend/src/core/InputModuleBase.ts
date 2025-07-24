@@ -17,9 +17,11 @@ export abstract class InputModuleBase extends BaseModule {
 
   protected emitEvent(event: any) {
     try {
+      this.log(`[Time] Emitting event from ${this.getModuleName()}: ${JSON.stringify(event)}`, 'Time');
+      // Route event through the message router
       messageRouter.routeEvent(this, event, this.mode);
     } catch (err) {
-      this.log(`Error in emitEvent: ${err}`, 'Error');
+      this.log(`[System] Error emitting event: ${err}`, 'Error');
     }
   }
 

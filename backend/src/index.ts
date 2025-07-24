@@ -26,7 +26,8 @@ app.use((req, res, next) => {
 });
 
 const logger = new Logger('System');
-const moduleLoader = new ModuleLoader(logger);
+const moduleRegistry = ModuleLoader.buildRegistryFromFilesystem();
+const moduleLoader = new ModuleLoader(logger, moduleRegistry);
 
 console.log('=== Backend server starting, using', __filename);
 
