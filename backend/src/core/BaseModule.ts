@@ -67,4 +67,8 @@ export abstract class BaseModule {
   public getModuleName(): string {
     return this.manifest?.name || '';
   }
+
+  public getConfig(): ModuleConfig {
+    return this.config;
+  }
 } 

@@ -29,7 +29,6 @@ const logger = new Logger('System');
 const moduleLoader = new ModuleLoader(logger);
 
 console.log('=== Backend server starting, using', __filename);
-console.log('=== TEST LOG: index.ts loaded ===');
 
 // Catch-all API log (before all API endpoints)
 app.use('/api', (req, res, next) => {
@@ -41,14 +40,29 @@ app.use('/api', (req, res, next) => {
 const configPath = path.join(__dirname, '../../config/interactions/interactions.json');
 let interactions: any[] = [];
 let modules: any[] = [];
-try {
-  const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-  interactions = config.interactions || [];
-  modules = moduleLoader.loadModulesFromConfig(configPath);
-  logger.log(`Loaded ${modules.length} modules from config`, 'System');
-} catch (e) {
-  logger.log('Failed to load config: ' + e, 'Error');
-}
+
+// Initialize modules asynchronously
+(async () => {
+  try {
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    interactions = config.interactions || [];
+    modules = moduleLoader.loadModulesFromConfig(configPath);
+    
+    // Start all loaded modules
+    for (const module of modules) {
+      try {
+        await module.start();
+        logger.log(`Started module: ${module.getModuleName()}`, 'System');
+      } catch (err) {
+        logger.log(`Failed to start module ${module.getModuleName()}: ${err}`, 'Error');
+      }
+    }
+    
+    logger.log(`Loaded and started ${modules.length} modules from config`, 'System');
+  } catch (e) {
+    logger.log('Failed to load config: ' + e, 'Error');
+  }
+})();
 
 let messageRouter = new MessageRouter(interactions, modules);
 
@@ -64,7 +78,7 @@ function broadcastWS(data: any) {
 logger.setBroadcast(broadcastWS);
 wss.on('connection', (ws: WebSocket) => {
   // On connect, send current state of all modules
-  ws.send(JSON.stringify({ type: 'all_modules', modules: modules.map(m => ({ id: m.getModuleName(), config: m.config })) }));
+          ws.send(JSON.stringify({ type: 'all_modules', modules: modules.map(m => ({ id: m.getModuleName(), config: m.getConfig() })) }));
 });
 
 // Periodically broadcast system stats
@@ -157,6 +171,101 @@ app.get('/modules', (req: Request, res: Response) => {
   res.json(moduleLoader.getAvailableModules());
 });
 
+// Get countdown info for time input modules
+app.get('/api/modules/:id/countdown', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const configParam = req.query.config as string;
+  
+  console.log('Countdown request for module ID:', id, 'Config:', configParam);
+  
+  let targetConfig = null;
+  if (configParam) {
+    try {
+      targetConfig = JSON.parse(configParam);
+    } catch (err) {
+      console.log('Invalid config parameter:', configParam);
+      return res.status(400).json({ error: 'Invalid config parameter' });
+    }
+  }
+  
+  // Try to find module by manifest name first, then by module directory name
+  let mod = modules.find(m => m.getModuleName() === id);
+  
+  // If not found by manifest name, try to find by module directory name
+  if (!mod) {
+    // Map common module directory names to their manifest names
+    const moduleNameMap: { [key: string]: string } = {
+      'time_input': 'Time Input',
+      'audio_output': 'Audio Output',
+      'dmx_output': 'DMX Output',
+      'osc_input': 'OSC Input',
+      'osc_output': 'OSC Output',
+      'http_input': 'HTTP Input',
+      'http_output': 'HTTP Output',
+      'serial_input': 'Serial Input',
+      'frames_input': 'Frames Input'
+    };
+    
+    const manifestName = moduleNameMap[id];
+    console.log('Looking for manifest name:', manifestName);
+    if (manifestName) {
+      mod = modules.find(m => m.getModuleName() === manifestName);
+    }
+  }
+  
+  if (!mod) {
+    console.log('Module not found for ID:', id);
+    return res.status(404).json({ error: 'Module not found' });
+  }
+  
+  // If we have a target config, find the specific module instance with that config
+  if (targetConfig) {
+    const originalMod = mod; // Store the original module for comparison
+    mod = modules.find(m => 
+      m.getModuleName() === originalMod.getModuleName() && 
+      JSON.stringify(m.getConfig()) === JSON.stringify(targetConfig)
+    );
+    
+    if (!mod) {
+      console.log('Module with specific config not found');
+      console.log('Looking for module:', originalMod.getModuleName(), 'with config:', JSON.stringify(targetConfig));
+      console.log('Available modules:', modules.map(m => ({ name: m.getModuleName(), config: m.getConfig() })));
+      return res.status(404).json({ error: 'Module with specific config not found' });
+    }
+  }
+  
+  console.log('Found module:', mod.getModuleName(), 'Constructor:', mod.constructor.name, 'Config:', mod.getConfig());
+  
+  // Check if this is a time input module
+  if (mod.constructor.name === 'TimeInputModule' && typeof mod.getCountdownInfo === 'function') {
+    const countdownInfo = mod.getCountdownInfo();
+    console.log('Countdown info:', countdownInfo);
+    res.json(countdownInfo);
+  } else {
+    console.log('Module does not support countdown');
+    res.status(400).json({ error: 'Module does not support countdown' });
+  }
+});
+
+// Start all modules manually
+app.post('/api/modules/start', async (req: Request, res: Response) => {
+  try {
+    console.log('Starting all modules...');
+    for (const module of modules) {
+      try {
+        await module.start();
+        console.log(`Started module: ${module.getModuleName()}`);
+      } catch (err) {
+        console.log(`Failed to start module ${module.getModuleName()}: ${err}`);
+      }
+    }
+    res.json({ success: true, message: `Started ${modules.length} modules` });
+  } catch (err) {
+    console.error('Failed to start modules:', err);
+    res.status(500).json({ error: 'Failed to start modules' });
+  }
+});
+
 // --- Settings update endpoint ---
 app.post('/modules/:id/settings', async (req: Request, res: Response) => {
   const { id } = req.params;
@@ -166,7 +275,7 @@ app.post('/modules/:id/settings', async (req: Request, res: Response) => {
   mod.lock();
   broadcastWS({ type: 'module_lock', moduleId: id });
   // Update settings in memory
-  Object.assign(mod.config, newSettings);
+        Object.assign(mod.getConfig(), newSettings);
   // Persist to config/interactions/interactions.json
   try {
     const configPath = path.join(__dirname, '../../config/interactions/interactions.json');
@@ -184,10 +293,10 @@ app.post('/modules/:id/settings', async (req: Request, res: Response) => {
     console.error('Failed to persist module settings:', err);
   }
   // Broadcast update
-  broadcastWS({ type: 'module_update', moduleId: id, newState: mod.config });
+  broadcastWS({ type: 'module_update', moduleId: id, newState: mod.getConfig() });
   mod.unlock();
   broadcastWS({ type: 'module_unlock', moduleId: id });
-  res.json({ success: true, newState: mod.config });
+  res.json({ success: true, newState: mod.getConfig() });
 });
 
 // --- Mode toggle endpoint ---
@@ -276,16 +385,18 @@ app.post('/api/interactions', async (req: Request, res: Response) => {
     let newInput, newOutput;
     if (InputClass) {
       newInput = new InputClass(inputConfig, logger.log.bind(logger));
+      await newInput.start(); // Start the input module
       modules.push(newInput);
     }
     if (OutputClass) {
       newOutput = new OutputClass(outputConfig, logger.log.bind(logger));
+      await newOutput.start(); // Start the output module
       modules.push(newOutput);
     }
     // Add to message router
     messageRouter.addInteraction(newInteraction, modules);
     // Broadcast new state to all UIs
-    broadcastWS({ type: 'all_modules', modules: modules.map(m => ({ id: m.getModuleName(), config: m.config })) });
+    broadcastWS({ type: 'all_modules', modules: modules.map(m => ({ id: m.getModuleName(), config: m.getConfig() })) });
     res.json({ success: true, interaction: newInteraction });
   } catch (err) {
     console.error('Failed to register new interaction:', err);
@@ -306,18 +417,56 @@ app.post('/api/interactions/remove', async (req: Request, res: Response) => {
     fs.writeFileSync(configPath, JSON.stringify(configData, null, 2));
     // Remove from message router
     messageRouter.removeInteraction(interactionToRemove);
-    // Stop and remove module instances
-    const inputIdx = modules.findIndex(m => m.getModuleName() === interactionToRemove.input.module);
+    // Stop and remove module instances - match by both module name and config
+    console.log(`Removing interaction: ${interactionToRemove.input.module} -> ${interactionToRemove.output.module}`);
+    console.log(`Current modules: ${modules.map(m => `${m.getModuleName()}:${JSON.stringify(m.getConfig())}`).join(', ')}`);
+    
+    // Map module directory names to manifest names for matching
+    const moduleNameMap: { [key: string]: string } = {
+      'time_input': 'Time Input',
+      'audio_output': 'Audio Output',
+      'dmx_output': 'DMX Output',
+      'osc_input': 'OSC Input',
+      'osc_output': 'OSC Output',
+      'http_input': 'HTTP Input',
+      'http_output': 'HTTP Output',
+      'serial_input': 'Serial Input',
+      'frames_input': 'Frames Input'
+    };
+    
+    const inputManifestName = moduleNameMap[interactionToRemove.input.module] || interactionToRemove.input.module;
+    const outputManifestName = moduleNameMap[interactionToRemove.output.module] || interactionToRemove.output.module;
+    
+    const inputIdx = modules.findIndex(m => 
+      m.getModuleName() === inputManifestName && 
+      JSON.stringify(m.getConfig()) === JSON.stringify(interactionToRemove.input.config)
+    );
     if (inputIdx !== -1) {
-      if (typeof modules[inputIdx].stop === 'function') modules[inputIdx].stop();
+      console.log(`Stopping and removing input module at index ${inputIdx}: ${modules[inputIdx].getModuleName()}`);
+      if (typeof modules[inputIdx].stop === 'function') {
+        await modules[inputIdx].stop();
+      }
       modules.splice(inputIdx, 1);
+    } else {
+      console.log(`Input module not found: ${inputManifestName} with config ${JSON.stringify(interactionToRemove.input.config)}`);
     }
-    const outputIdx = modules.findIndex(m => m.getModuleName() === interactionToRemove.output.module);
+    
+    const outputIdx = modules.findIndex(m => 
+      m.getModuleName() === outputManifestName && 
+      JSON.stringify(m.getConfig()) === JSON.stringify(interactionToRemove.output.config)
+    );
     if (outputIdx !== -1) {
-      if (typeof modules[outputIdx].stop === 'function') modules[outputIdx].stop();
+      console.log(`Stopping and removing output module at index ${outputIdx}: ${modules[outputIdx].getModuleName()}`);
+      if (typeof modules[outputIdx].stop === 'function') {
+        await modules[outputIdx].stop();
+      }
       modules.splice(outputIdx, 1);
+    } else {
+      console.log(`Output module not found: ${outputManifestName} with config ${JSON.stringify(interactionToRemove.output.config)}`);
     }
-    broadcastWS({ type: 'all_modules', modules: modules.map(m => ({ id: m.getModuleName(), config: m.config })) });
+    
+    console.log(`Modules after removal: ${modules.map(m => m.getModuleName()).join(', ')}`);
+    broadcastWS({ type: 'all_modules', modules: modules.map(m => ({ id: m.getModuleName(), config: m.getConfig() })) });
     res.json({ success: true });
   } catch (err) {
     console.error('Failed to remove interaction:', err);
@@ -339,7 +488,7 @@ app.post('/api/interactions/update', async (req: Request, res: Response) => {
     fs.writeFileSync(configPath, JSON.stringify(configData, null, 2));
     // Update message router
     messageRouter.updateInteraction(oldInteraction, newInteraction, modules);
-    broadcastWS({ type: 'all_modules', modules: modules.map(m => ({ id: m.getModuleName(), config: m.config })) });
+    broadcastWS({ type: 'all_modules', modules: modules.map(m => ({ id: m.getModuleName(), config: m.getConfig() })) });
     res.json({ success: true });
   } catch (err) {
     console.error('Failed to update interaction:', err);
@@ -449,8 +598,8 @@ app.post('/api/modules/:module/trigger', async (req: Request, res: Response) => 
   const config = req.body.config;
   console.log('Trigger request:', moduleName, config);
   const mod = modules.find(m => {
-    console.log('Comparing to:', m.getModuleName(), m.config);
-    return normalizeModuleName(m.getModuleName()) === normalizeModuleName(moduleName) && JSON.stringify(m.config) === JSON.stringify(config);
+    console.log('Comparing to:', m.getModuleName(), m.getConfig());
+    return normalizeModuleName(m.getModuleName()) === normalizeModuleName(moduleName) && JSON.stringify(m.getConfig()) === JSON.stringify(config);
   });
   console.log('Found module:', mod ? 'YES' : 'NO');
   if (!mod || typeof mod.manualTrigger !== 'function') {

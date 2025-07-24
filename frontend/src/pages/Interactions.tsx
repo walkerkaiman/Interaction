@@ -23,8 +23,70 @@ function buildNodeLabel(module: string, config: any) {
 
 // Custom node with trash can
 function ModuleNode({ id, data }: NodeProps) {
+  const [countdown, setCountdown] = useState<string>('');
+  
   // Determine if this is an audio_output node
   const isAudioOutput = data.label.startsWith('audio_output');
+  // Determine if this is a time_input node
+  const isTimeInput = data.label.startsWith('time_input');
+  
+  // Fetch countdown for time input modules
+  useEffect(() => {
+    if (isTimeInput) {
+      const fetchCountdown = async () => {
+        try {
+          // Extract module name from node ID
+          const match = id.match(/^(input|output)-(.+?)-({.*})$/);
+          if (!match) return;
+          const [, , module] = match;
+          
+          // Map module directory names to manifest names for API calls
+          const moduleNameMap: { [key: string]: string } = {
+            'time_input': 'Time Input',
+            'audio_output': 'Audio Output',
+            'dmx_output': 'DMX Output',
+            'osc_input': 'OSC Input',
+            'osc_output': 'OSC Output',
+            'http_input': 'HTTP Input',
+            'http_output': 'HTTP Output',
+            'serial_input': 'Serial Input',
+            'frames_input': 'Frames Input'
+          };
+          
+          const apiModuleName = moduleNameMap[module] || module;
+          
+          // Extract config from node ID to pass to the countdown API
+          const configMatch = id.match(/^(input|output)-(.+?)-({.*})$/);
+          let config = null;
+          if (configMatch) {
+            try {
+              config = JSON.parse(configMatch[3]);
+            } catch (err) {
+              console.error('Failed to parse config from node ID:', err);
+            }
+          }
+          
+          const url = config 
+            ? `/api/modules/${encodeURIComponent(apiModuleName)}/countdown?config=${encodeURIComponent(JSON.stringify(config))}`
+            : `/api/modules/${encodeURIComponent(apiModuleName)}/countdown`;
+            
+          const response = await fetch(url);
+          if (response.ok) {
+            const data = await response.json();
+            setCountdown(data.countdown);
+          }
+        } catch (error) {
+          console.error('Failed to fetch countdown:', error);
+        }
+      };
+      
+      fetchCountdown();
+      // Update countdown every second
+      const interval = setInterval(fetchCountdown, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [id, isTimeInput]);
+  
   const handlePlay = async () => {
     // Extract config from nodeId
     const match = id.match(/^(input|output)-(.+?)-({.*})$/);
@@ -39,9 +101,26 @@ function ModuleNode({ id, data }: NodeProps) {
       body: JSON.stringify({ config }),
     });
   };
+  
   return (
     <div style={{ minWidth: 180, padding: 8, border: '2px solid #fff', borderRadius: 6, background: '#222', position: 'relative' }}>
       <div style={{ whiteSpace: 'pre-line', fontSize: 13, color: '#fff' }}>{data.label}</div>
+      
+      {/* Countdown display for time input modules */}
+      {isTimeInput && countdown && (
+        <div style={{ 
+          marginTop: 4, 
+          padding: '2px 6px', 
+          background: '#444', 
+          borderRadius: 3, 
+          fontSize: 11, 
+          color: '#fff',
+          border: '1px solid #666'
+        }}>
+          Countdown: {countdown}
+        </div>
+      )}
+      
       {/* Icon row: play (if audio) and delete, aligned top right */}
       <div style={{ position: 'absolute', top: 2, right: 2, display: 'flex', gap: 4 }}>
         {isAudioOutput && (

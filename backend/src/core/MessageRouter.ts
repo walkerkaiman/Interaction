@@ -51,8 +51,14 @@ export class MessageRouter {
     try {
       this.connections = [];
       for (const interaction of interactions) {
-        const input = modules.find(m => m.getModuleName() === interaction.input.module);
-        const output = modules.find(m => m.getModuleName() === interaction.output.module);
+        const input = modules.find(m => 
+          m.getModuleName() === interaction.input.module && 
+          JSON.stringify(m.getConfig()) === JSON.stringify(interaction.input.config)
+        );
+        const output = modules.find(m => 
+          m.getModuleName() === interaction.output.module && 
+          JSON.stringify(m.getConfig()) === JSON.stringify(interaction.output.config)
+        );
         if (input && output) {
           this.connections.push({ input, output });
         }
@@ -64,8 +70,14 @@ export class MessageRouter {
 
   addInteraction(interaction: any, modules: any[]) {
     try {
-      const input = modules.find(m => m.getModuleName() === interaction.input.module);
-      const output = modules.find(m => m.getModuleName() === interaction.output.module);
+      const input = modules.find(m => 
+        m.getModuleName() === interaction.input.module && 
+        JSON.stringify(m.getConfig()) === JSON.stringify(interaction.input.config)
+      );
+      const output = modules.find(m => 
+        m.getModuleName() === interaction.output.module && 
+        JSON.stringify(m.getConfig()) === JSON.stringify(interaction.output.config)
+      );
       if (input && output) {
         this.connections.push({ input, output });
       }
@@ -78,7 +90,9 @@ export class MessageRouter {
     try {
       this.connections = this.connections.filter(conn =>
         !(conn.input.getModuleName() === interaction.input.module &&
-          conn.output.getModuleName() === interaction.output.module)
+          JSON.stringify(conn.input.getConfig()) === JSON.stringify(interaction.input.config) &&
+          conn.output.getModuleName() === interaction.output.module &&
+          JSON.stringify(conn.output.getConfig()) === JSON.stringify(interaction.output.config))
       );
     } catch (err) {
       console.error('Error in MessageRouter.removeInteraction:', err);
